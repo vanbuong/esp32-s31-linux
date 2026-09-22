@@ -24,6 +24,11 @@
 
 		/* Scanned out by the loader's DMA across the handoff. */
 		fb_region: framebuffer@50f40000 {
+			/*
+			 * Sized for the Korvo-1 800x480 panel.  The
+			 * Function-CoreBoard-1 ILI9341 only uses the first
+			 * 150 KiB; the rest stays reserved and unused.
+			 */
 			reg = <0x50f40000 0xbc000>;
 			no-map;
 		};

@@ -1,0 +1,35 @@
+From: Marco Müller <hello@annoyedmilk.ch>
+Subject: [PATCH] net: ethernet: esp32s31: hook up the Gigabit Ethernet IPC driver
+
+The RGMII EMAC stays with ESP-IDF on hart 0. Add the vendor directory so
+Linux can exchange frames through shared SRAM on boards that enable the
+node in their device tree.
+
+Signed-off-by: Marco Müller <hello@annoyedmilk.ch>
+---
+ drivers/net/ethernet/Kconfig  | 1 +
+ drivers/net/ethernet/Makefile | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/drivers/net/ethernet/Kconfig b/drivers/net/ethernet/Kconfig
+--- a/drivers/net/ethernet/Kconfig
++++ b/drivers/net/ethernet/Kconfig
+@@ -58,6 +58,7 @@
+ source "drivers/net/ethernet/dlink/Kconfig"
+ source "drivers/net/ethernet/emulex/Kconfig"
+ source "drivers/net/ethernet/engleder/Kconfig"
++source "drivers/net/ethernet/espressif/Kconfig"
+ source "drivers/net/ethernet/ezchip/Kconfig"
+ source "drivers/net/ethernet/faraday/Kconfig"
+ source "drivers/net/ethernet/freescale/Kconfig"
+diff --git a/drivers/net/ethernet/Makefile b/drivers/net/ethernet/Makefile
+--- a/drivers/net/ethernet/Makefile
++++ b/drivers/net/ethernet/Makefile
+@@ -37,6 +37,7 @@
+ obj-$(CONFIG_NET_VENDOR_DLINK) += dlink/
+ obj-$(CONFIG_NET_VENDOR_EMULEX) += emulex/
+ obj-$(CONFIG_NET_VENDOR_ENGLEDER) += engleder/
++obj-$(CONFIG_NET_VENDOR_ESPRESSIF) += espressif/
+ obj-$(CONFIG_NET_VENDOR_EZCHIP) += ezchip/
+ obj-$(CONFIG_NET_VENDOR_FARADAY) += faraday/
+ obj-$(CONFIG_NET_VENDOR_FREESCALE) += freescale/

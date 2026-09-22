@@ -19,8 +19,6 @@ CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 # NVS is disabled here, so PHY calibration cannot be cached: ask for a full
 # calibration outright instead of failing the NVS lookup on every boot.
 # CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE is not set
-# GPIO33/34 are both the LCD data bus and the native USB Serial/JTAG D-/D+,
-# and the loader skips display init when a secondary console claims them.
-# Select CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG for JTAG and a dark
-# panel; flashing and the Linux console use the CP2102N bridge either way.
-CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# Board-specific secondary console / Ethernet options live in
+# sdkconfig.defaults.korvo-1 and sdkconfig.defaults.function-coreboard-1,
+# selected by BOARD= when the loader is built.

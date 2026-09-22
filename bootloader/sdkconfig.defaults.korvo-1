@@ -1,0 +1,4 @@
+# Korvo-1: GPIO33/34 are LCD RGB data pins, so keep the secondary console off
+# and let the loader own the panel.  Select
+# CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG for JTAG and a dark panel.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

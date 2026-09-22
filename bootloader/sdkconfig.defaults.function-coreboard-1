@@ -1,0 +1,8 @@
+# Function-CoreBoard-1: SPI ILI9341 does not touch GPIO33/34, so the onboard
+# USB Serial/JTAG port can stay available for OpenOCD while the UART bridge
+# carries the Linux console.
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
+# CONFIG_ESP_CONSOLE_SECONDARY_NONE is not set
+
+CONFIG_ETH_ENABLED=y
+CONFIG_ETH_USE_ESP32_EMAC=y

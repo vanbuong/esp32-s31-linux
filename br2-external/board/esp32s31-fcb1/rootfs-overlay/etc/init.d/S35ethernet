@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Bring up the on-board Gigabit Ethernet port with a DHCP lease when a cable
+# is present.  Wi-Fi remains available through the wifi helper.
+
+[ -d /sys/class/net/eth0 ] || exit 0
+
+case "$1" in
+start)
+	ip link set eth0 up >/dev/null 2>&1 || exit 0
+	udhcpc -i eth0 -n -q -t 3 >/dev/null 2>&1 &
+	echo "ethernet: dhcp on eth0 in the background"
+	;;
+stop)
+	killall udhcpc >/dev/null 2>&1
+	ip link set eth0 down >/dev/null 2>&1
+	;;
+*)
+	exit 1
+	;;
+esac

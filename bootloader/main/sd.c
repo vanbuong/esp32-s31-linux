@@ -17,12 +17,14 @@
 #include "soc/gpio_pins.h"
 #include "soc/gpio_sig_map.h"
 #include "soc/sdmmc_pins.h"
+#include "board.h"
 #include "loader.h"
 
-#define SD_POWER_EN_GPIO    GPIO_NUM_39
 #define SD_TARGET_CCLK_HZ   50000000U
 
 static const char *TAG = "s31-linux-sd";
+
+#if BOARD_HAS_SDMMC
 
 static esp_err_t configure_sd_pin(gpio_num_t gpio, bool pull_up)
 {
@@ -61,14 +63,18 @@ void init_sd_card(void)
     uint32_t div;
     esp_err_t err;
 
-    err = gpio_set_direction(SD_POWER_EN_GPIO, GPIO_MODE_OUTPUT);
+#if BOARD_HAS_SD_POWER_EN
+    err = gpio_set_direction(BOARD_SD_POWER_EN_GPIO, GPIO_MODE_OUTPUT);
     if (err == ESP_OK) {
-        err = gpio_set_level(SD_POWER_EN_GPIO, 0);
+        err = gpio_set_level(BOARD_SD_POWER_EN_GPIO, 0);
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "failed to enable SD slot power: %s", esp_err_to_name(err));
         return;
     }
+#else
+    ESP_LOGI(TAG, "SD slot power left to the external socket / 3V3 rail");
+#endif
 
     err = esp_clk_tree_enable_src(SDMMC_CLK_SRC_DEFAULT, true);
     if (err == ESP_OK) {
@@ -111,10 +117,10 @@ void init_sd_card(void)
     }
 
     /*
-     * The Korvo-1 microSD slot has no card-detect, write-protect or SDIO
-     * interrupt contacts, so those host inputs are driven from the GPIO
-     * matrix constant sources rather than from a pad.  CARD_DETECT_N is
-     * active low and tied to 0 to report a card as always present,
+     * Neither the Korvo-1 microSD slot nor a typical SDIO breakout on the
+     * Function-CoreBoard-1 header exposes CD/WP/INT contacts, so those host
+     * inputs are driven from the GPIO matrix constant sources.  CARD_DETECT_N
+     * is active low and tied to 0 to report a card as always present,
      * WRITE_PRT is tied to an inverted 1 so the card never reads as write
      * protected, and CARD_INT_N is held at 1 to keep the SDIO interrupt
      * deasserted.
@@ -135,7 +141,50 @@ void init_sd_card(void)
         return;
     }
 
-    ESP_LOGI(TAG, "SD host: source=%" PRIu32 "Hz cclk_in=%" PRIu32 "Hz div=%" PRIu32
-                  " verid=0x%08" PRIx32,
-             source_hz, source_hz / div, div, sdmmc_ll_get_version_id(&SDMMC));
+    ESP_LOGI(TAG, "SD host (%s): source=%" PRIu32 "Hz cclk_in=%" PRIu32
+                  "Hz div=%" PRIu32 " verid=0x%08" PRIx32,
+             BOARD_NAME, source_hz, source_hz / div, div,
+             sdmmc_ll_get_version_id(&SDMMC));
 }
+
+#elif BOARD_HAS_SPI_SD
+
+void init_sd_card(void)
+{
+    static const gpio_num_t pins[] = {
+        BOARD_SPI_SD_PIN_SCLK,
+        BOARD_SPI_SD_PIN_MOSI,
+        BOARD_SPI_SD_PIN_MISO,
+        BOARD_SPI_SD_PIN_CS,
+    };
+    esp_err_t err;
+
+    /*
+     * Leave the pads as GPIO with pull-ups; Linux spi-gpio + mmc_spi own the
+     * bus after the handoff.  Do not claim them as SDMMC.
+     */
+    for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+        err = gpio_reset_pin(pins[i]);
+        if (err == ESP_OK) {
+            err = gpio_set_pull_mode(pins[i], GPIO_PULLUP_ONLY);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "failed to prep SPI SD GPIO %d: %s",
+                     pins[i], esp_err_to_name(err));
+            return;
+        }
+    }
+
+    ESP_LOGI(TAG,
+             "SPI microSD (%s): SCLK=%d MOSI=%d MISO=%d CS=%d (Linux spi-gpio)",
+             BOARD_NAME, BOARD_SPI_SD_PIN_SCLK, BOARD_SPI_SD_PIN_MOSI,
+             BOARD_SPI_SD_PIN_MISO, BOARD_SPI_SD_PIN_CS);
+}
+
+#else
+
+void init_sd_card(void)
+{
+}
+
+#endif

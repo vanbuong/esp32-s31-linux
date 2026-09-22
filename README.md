@@ -1,7 +1,19 @@
 # ESP32-S31 Linux
 
-Linux 7.1 and OpenSBI 1.9 bring-up for the ESP32-S31 Korvo-1, using 16 MiB
-of octal PSRAM as Linux memory.
+Linux 7.1 and OpenSBI 1.9 bring-up for the ESP32-S31, using 16 MiB of octal
+PSRAM as Linux memory. Two boards are supported:
+
+| `BOARD=` | Hardware |
+| --- | --- |
+| `korvo-1` (default) | ESP32-S31 Korvo-1 with 800×480 RGB LCD and onboard microSD |
+| `function-coreboard-1` | ESP32-S31-Function-CoreBoard-1 with RGMII Gigabit Ethernet, external SDIO microSD on J2, and SPI ILI9341 |
+| `function-coreboard-1-spi-sd` | Same Function-CoreBoard-1, but J2 wired as an SPI microSD socket (CLK/CMD/D0/D3) |
+
+Select the board on every Make invocation that builds the loader or rootfs,
+for example `make BOARD=function-coreboard-1-spi-sd build`. GitHub Actions builds
+all boards on every push and pull request (loader, OpenSBI, kernel Image,
+SD-card `rootfs.ext2`/`sdcard.img`, initramfs, and patch hygiene); see
+`.github/workflows/ci.yml`.
 
 The verified boot chain is:
 
@@ -76,15 +88,32 @@ controlling terminal or Ctrl-C does nothing there, and `cttyhack` cannot
 supply it: it reopens whatever `/sys/class/tty/console/active` names last,
 which is the serial port.
 
-The LCD data bus uses GPIO33 and GPIO34, which are also the native USB
-Serial/JTAG D-/D+ pins, so the loader initializes the display only when the
-ESP-IDF secondary console is off. `bootloader/sdkconfig.defaults` selects
-`CONFIG_ESP_CONSOLE_SECONDARY_NONE`, so the loader brings the panel up and
-`make openocd` has nothing to attach to. Select
+On Function-CoreBoard-1 the same PSRAM carve-out backs a 320×240 SPI ILI9341
+instead. The loader brings the panel up over SPI2 and a low-priority FreeRTOS
+task keeps flushing the buffer after the handoff; Linux still sees
+`/dev/fb0` through `simple-framebuffer`. Default wiring (edit
+`bootloader/main/board.h` to change it):
+
+| Signal | GPIO |
+| --- | ---: |
+| SCLK | 36 |
+| MOSI | 37 |
+| CS | 39 |
+| DC | 40 |
+| RST | 42 |
+| BL | 43 |
+
+The Korvo-1 LCD data bus uses GPIO33 and GPIO34, which are also the native USB
+Serial/JTAG D-/D+ pins, so that board's loader initializes the display only
+when the ESP-IDF secondary console is off. `bootloader/sdkconfig.defaults.korvo-1`
+selects `CONFIG_ESP_CONSOLE_SECONDARY_NONE`, so the loader brings the panel up
+and `make openocd` has nothing to attach to. Select
 `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG` instead to get JTAG back; the
 loader then logs `display disabled: GPIO33/34 reserved for USB Serial/JTAG`
 and `/dev/fb0` still registers from the DTB but drives nothing. Flashing and
-the Linux console run over the CP2102N bridge either way.
+the Linux console run over the CP2102N bridge either way. Function-CoreBoard-1
+keeps the onboard USB Serial/JTAG port available because the SPI panel does
+not use those pins.
 
 The board's USB Type-A connector is exposed as a Linux high-speed USB host.
 An ESP32-S31 PHY driver performs the ESP-IDF clock, reset, UTMI, and host
@@ -137,16 +166,28 @@ releases the module reset, hands the pads to the SD host, and reports
 card-present/not-write-protected through the GPIO matrix constant inputs,
 since the slot has no CD/WP contacts.
 
-Linux drives the controller with the stock `dw_mmc` driver (the S31 SDHOST
-is a Synopsys DesignWare MSHC). Transfers use the controller's internal DMA:
-the host's PIO FIFO port is non-functional in silicon (CPU reads never pop
-the FIFO, they return the same latched word, and ESP-IDF never touches that
-register either), so IDMAC is the only working data path. Patch
-`0003-mmc-dw_mmc-add-esp32s31-support.patch` identifies the SoC integration
-and takes the descriptor ring from `dma_alloc_noncoherent()` instead of
-`dma_alloc_coherent()`, syncing the whole ring around each ownership
-hand-off. The ring is synced as a unit because descriptors are 16 bytes and
-several share a cache line.
+Function-CoreBoard-1 exposes the same SDMMC slot-0 pads on header J2
+(D0–D3/CLK/CMD = GPIO20–25) for an external SDIO microSD socket. There is no
+board-level power FET: power the socket from the header 3V3 rail. Use
+`BOARD=function-coreboard-1` for that SDIO wiring.
+
+If you only have an SPI microSD breakout, use
+`BOARD=function-coreboard-1-spi-sd` instead. That profile leaves SDMMC off and
+drives the same J2 pads as SPI with Linux `spi-gpio` + `mmc_spi` (Espressif
+SDSPI mapping: CLK=SCLK GPIO24, CMD=MOSI GPIO25, D0=MISO GPIO20, D3=CS
+GPIO23). Throughput is modest until a GPSPI host driver lands; the card still
+appears as `/dev/mmcblk0` for the same rootfs layout.
+
+For the SDIO profiles, Linux drives the controller with the stock `dw_mmc`
+driver (the S31 SDHOST is a Synopsys DesignWare MSHC). Transfers use the
+controller's internal DMA: the host's PIO FIFO port is non-functional in
+silicon (CPU reads never pop the FIFO, they return the same latched word, and
+ESP-IDF never touches that register either), so IDMAC is the only working
+data path. Patch `0003-mmc-dw_mmc-add-esp32s31-support.patch` identifies the
+SoC integration and takes the descriptor ring from `dma_alloc_noncoherent()`
+instead of `dma_alloc_coherent()`, syncing the whole ring around each
+ownership hand-off. The ring is synced as a unit because descriptors are 16
+bytes and several share a cache line.
 
 FAT (VFAT) and ext4 are enabled. The card carries both: an MBR whose first
 partition is FAT32 and whose second is the ext4 root. `/etc/init.d/S10sdcard`
@@ -179,9 +220,10 @@ with its configuration in `br2-external/`. It builds the kernel as well, from
 a stock release and the patch series; only OpenSBI and the loader keep their
 own paths, because both need the Espressif toolchain.
 
-The root password is `korvo-bringup`; the serial and panel gettys log root in
-automatically, and Dropbear wants the password. `gdbserver` goes on the card
-while its cross-GDB stays in the container.
+The root password is `korvo-bringup` on Korvo-1 and `fcb1-bringup` on
+Function-CoreBoard-1; the serial and panel gettys log root in automatically,
+and Dropbear wants the password. `gdbserver` goes on the card while its
+cross-GDB stays in the container.
 
 Four things happen at boot so the board is usable without a console:
 
@@ -352,18 +394,22 @@ it also means `CONFIG_CMDLINE_FORCE=y` and `rdinit=/init` never have to change
 to move the root filesystem.
 
 Internal SRAM is shared between the two harts. The firmware keeps the ESP-IDF
-heap out of `0x2f040000`-`0x2f060000`: the lower half is the kernel's coherent
-DMA pool and the upper half carries the Wi-Fi rings. Both are reached without
-the data cache, which is what makes them usable from both harts at once.
+heap out of `0x2f040000`-`0x2f079000`: `0x2f040000` is the kernel's coherent
+DMA pool, `0x2f050000` carries the Wi-Fi rings, `0x2f060000` carries the
+Ethernet rings on Function-CoreBoard-1, and `0x2f079000` holds the Korvo-1
+LCD DMA descriptor ring. All of these are reached without the data cache,
+which is what makes them usable from both harts at once.
 
 ## Debugging
 
-JTAG and the display are mutually exclusive: both need GPIO33/34. The
-checked-in `bootloader/sdkconfig.defaults` selects the panel, so switch it to
-`CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG` and rebuild the loader first.
-Editing that file is enough: the `bootloader` target discards an `sdkconfig`
-older than the defaults, because idf.py otherwise reads the defaults only when
-it first creates that file and silently keeps the old configuration.
+On Korvo-1, JTAG and the RGB display are mutually exclusive: both need
+GPIO33/34. The checked-in `bootloader/sdkconfig.defaults.korvo-1` selects the
+panel, so switch it to `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG` and
+rebuild the loader first. Editing that file is enough: the `bootloader`
+target discards an `sdkconfig` older than the defaults, because idf.py
+otherwise reads the defaults only when it first creates that file and
+silently keeps the old configuration. Function-CoreBoard-1 keeps USB
+Serial/JTAG available alongside the SPI panel.
 
 The breakout is wired white/D- to GPIO33 and green/D+ to GPIO34. Reversed, it
 does not enumerate at all -- and neither does it while a loader built for the
@@ -383,6 +429,15 @@ the build volume), or
 `build/bootloader/s31-linux-loader.elf` as appropriate.
 
 Boot logs are written under `logs/` and ignored by Git.
+
+## Ethernet (Function-CoreBoard-1)
+
+The onboard RGMII Gigabit MAC and Motorcomm YT8531 PHY stay with ESP-IDF on
+hart 0, using the IDF default pin map (MDC=GPIO5, MDIO=GPIO6, PHY reset=GPIO7,
+data plane GPIO8–19). Linux sees `eth0` from `esp32s31-eth`, which exchanges
+frames through a second shared-SRAM IPC window and the FROM_CPU_2/3 doorbells.
+`S35ethernet` raises the link and starts `udhcpc` in the background when the
+interface appears.
 
 ## Wi-Fi
 
@@ -434,8 +489,9 @@ compile it.
 - USB host carries HID and mass storage; USB networking is not enabled;
 - coherent DMA allocations all come from one 64 KiB SRAM pool, so a driver
   that wants a large coherent buffer will fail to allocate;
-- most board peripherals other than the panel, SD slot, USB host and WLAN
-  modem are not enabled yet;
+- most board peripherals other than the panel, SD slot, USB host, WLAN modem
+  and (on Function-CoreBoard-1) Gigabit Ethernet are not enabled yet;
+- SPI ILI9341 pinout is a documented J2 default; rewire in `board.h` if needed;
 - there is no audio. The kernel has no `SND_SOC`, no I2C and no ESP32-S31
   ASoC driver, so the Korvo-1's codec is unreachable; `mpg123` and
   `alsa-utils` were dropped from the card rather than ship players with

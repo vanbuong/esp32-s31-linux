@@ -1,0 +1,34 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# udhcpc hook: BusyBox calls this with the lease state in $1 and the lease
+# itself in the environment.
+
+case "$1" in
+deconfig)
+	ip addr flush dev "$interface"
+	ip link set "$interface" up
+	;;
+bound | renew)
+	ip addr add "$ip/$mask" dev "$interface"
+	ip link set "$interface" up
+
+	for gateway in $router; do
+		ip route add default via "$gateway" dev "$interface" 2>/dev/null
+	done
+
+	: >/etc/resolv.conf
+	for server in $dns; do
+		echo "nameserver $server" >>/etc/resolv.conf
+	done
+
+	# A fresh lease is the moment to fix a clock with no RTC behind it:
+	# S01clock only restores the last known time, which drifts.  Renewals
+	# are left alone, so a running board does not keep asking.
+	if [ "$1" = bound ]; then
+		(
+			ntpd -q -n -p pool.ntp.org >/dev/null 2>&1 &&
+				date -u +'%Y-%m-%d %H:%M:%S' >/etc/timestamp
+		) &
+	fi
+	;;
+esac

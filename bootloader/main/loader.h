@@ -5,3 +5,4 @@
 
 void init_sd_card(void);
 void start_wifi(void);
+void start_eth(void);
