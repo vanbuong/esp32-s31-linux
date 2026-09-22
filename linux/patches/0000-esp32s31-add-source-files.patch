@@ -2402,7 +2402,7 @@ new file mode 100644
 --- /dev/null
 +++ b/drivers/net/ethernet/espressif/esp32s31-eth.c
 @@ -0,0 +1,294 @@
-+# SPDX-License-Identifier: GPL-2.0-only
++// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * ESP32-S31 Gigabit Ethernet IPC netdev
 + *
