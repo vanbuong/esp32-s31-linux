@@ -11,7 +11,8 @@ PSRAM as Linux memory. Two boards are supported:
 Select the board on every Make invocation that builds the loader or rootfs,
 for example `make BOARD=function-coreboard-1 build`. GitHub Actions builds
 both boards on every push and pull request (loader, OpenSBI, kernel Image,
-and patch hygiene); see `.github/workflows/ci.yml`.
+SD-card `rootfs.ext2`/`sdcard.img`, initramfs, and patch hygiene); see
+`.github/workflows/ci.yml`.
 
 The verified boot chain is:
 

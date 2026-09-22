@@ -131,10 +131,11 @@ jobs:
             build/opensbi.elf
           if-no-files-found: error
 
-  kernel:
-    name: Kernel (${{ matrix.board }})
+  rootfs:
+    name: Rootfs (${{ matrix.board }})
     runs-on: ubuntu-latest
     needs: [board-check, kernel-check]
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
@@ -154,7 +155,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/br-dl-cache
-          key: br-dl-${{ hashFiles('br2-external/configs/*.defconfig', 'linux/patches/**') }}
+          key: br-dl-${{ hashFiles('br2-external/configs/*.defconfig', 'br2-external/board/**', 'linux/patches/**') }}
           restore-keys: br-dl-
 
       - name: Seed download cache into the volume
@@ -168,8 +169,8 @@ jobs:
               chown -R '"$(id -u):$(id -g)"' /br
             '
 
-      - name: Build Linux Image for ${{ matrix.board }}
-        run: make ci-kernel BOARD=${{ matrix.board }}
+      - name: Build SD rootfs for ${{ matrix.board }}
+        run: make ci-rootfs BOARD=${{ matrix.board }}
 
       - name: Refresh download cache from the volume
         if: always()
@@ -178,11 +179,15 @@ jobs:
           docker run --rm -v "$BR_VOLUME":/br -v /tmp/br-dl-cache:/cache \
             "$BR_IMAGE" bash -c 'cp -a /br/dl/. /cache/ 2>/dev/null || true'
 
-      - name: Upload kernel Image
+      - name: Upload rootfs artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-${{ matrix.board }}
+          name: rootfs-${{ matrix.board }}
           path: |
             build/Image
             build/linux.size
+            build/initramfs.cpio
+            build/buildroot/rootfs.ext2
+            build/buildroot/sdcard.img
           if-no-files-found: error
+          compression-level: 9

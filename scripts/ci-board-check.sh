@@ -31,6 +31,8 @@ check_board() {
 	check_file "$board_dir/genimage.cfg"
 	check_file "$board_dir/post-build.sh"
 	check_file "$board_dir/post-image.sh"
+	check_file "$board_dir/rootfs-overlay/etc/init.d/S10sdcard"
+	check_file "$board_dir/rootfs-overlay/etc/init.d/S99banner"
 	check_file "bootloader/$defaults"
 	check_file "linux/arch/riscv/boot/dts/espressif/${dtb}.dts"
 

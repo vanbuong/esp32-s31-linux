@@ -105,7 +105,7 @@ INITRAMFS_OFFSET := 0xa20000
 
 .PHONY: help check ports build bootloader opensbi kernel kernel-patches \
 	kernel-check kernel-clean kernel-vmlinux kernel-menuconfig \
-	kernel-saveconfig ci-board-check ci-kernel \
+	kernel-saveconfig ci-board-check ci-kernel ci-rootfs \
 	container-image \
 	br-volume br-artifacts rootfs rootfs-menuconfig initramfs sdcard sdpart \
 	sdwrite sdroot flash monitor openocd clean
@@ -118,6 +118,8 @@ help:
 		'' \
 		'  make check                         verify host tools and submodules' \
 		'  make ci-board-check                validate both board configs (CI)' \
+		'  make ci-kernel                     CI: Linux Image only' \
+		'  make ci-rootfs                     CI: Image, rootfs.ext2, sdcard.img, initramfs' \
 		'  make ports                         list connected serial devices' \
 		'  make build                         build loader, OpenSBI, Linux, rootfs' \
 		'  make flash FLASH_PORT=/dev/cu.X    build and flash the complete image' \
@@ -316,7 +318,6 @@ else
 endif
 
 # CI builds only the kernel Image for the selected BOARD (builtin DTB included).
-# Full rootfs stays a local / macOS-container concern.
 ci-kernel: kernel-patches br-volume
 	@$(BR_RUN) sh -c 'set -e; \
 		cd /work/$(BR_DIR); \
@@ -332,6 +333,29 @@ pathlib.Path("$(BUILD_DIR)/linux.size").write_bytes( \
     struct.pack("<III", 0x455A4953, len(data), zlib.crc32(data))); \
 print("linux.size: %d bytes" % len(data))'
 	@ls -l "$(BUILD_DIR)/Image" "$(BUILD_DIR)/linux.size"
+
+# Full SD-card filesystem for CI: rootfs.ext2, provisioning sdcard.img, the
+# flashed Image (+ linux.size manifest), and the initramfs that switch_roots.
+ci-rootfs: kernel-patches br-volume
+	@$(BR_RUN) sh -c 'set -e; \
+		cd /work/$(BR_DIR); \
+		$(BR_MAKE) $(BR_DEFCONFIG); \
+		$(BR_MAKE); \
+		test -f /br/output/images/Image; \
+		test -f /br/output/images/rootfs.ext2; \
+		test -f /br/output/images/sdcard.img; \
+		test -f /br/output/images/linux.size; \
+		mkdir -p /work/$(BR_OUT) /work/$(BUILD_DIR); \
+		cp /br/output/images/rootfs.ext2 /br/output/images/sdcard.img \
+			/work/$(BR_OUT)/; \
+		cp /br/output/images/Image /br/output/images/linux.size \
+			/work/$(BUILD_DIR)/'
+	@$(BR_RUN) sh -c 'cd /work && python3 scripts/mkinitramfs.py \
+		--target /br/output/target --init "$(INITRAMFS_INIT)" \
+		--output "$(BUILD_DIR)/initramfs.cpio" --size 0x200000'
+	@ls -l "$(BUILD_DIR)/Image" "$(BUILD_DIR)/linux.size" \
+		"$(BUILD_DIR)/initramfs.cpio" \
+		"$(BR_OUT)/rootfs.ext2" "$(BR_OUT)/sdcard.img"
 
 # The checked-in defconfig is the source of truth and is reapplied every build.
 rootfs: kernel-patches br-volume
