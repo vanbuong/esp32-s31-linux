@@ -288,7 +288,7 @@ container-image:
 ifeq ($(HOST_OS),Darwin)
 	@"$(CONTAINER)" build -t "$(BR_IMAGE)" container
 else
-	@"$(CONTAINER)" build -f Containerfile -t "$(BR_IMAGE)" container
+	@"$(CONTAINER)" build -f container/Containerfile -t "$(BR_IMAGE)" container
 endif
 
 # Buildroot must not run as root, so the volume is handed to the caller once.

@@ -12,9 +12,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IDF_TOOLS_PATH: /opt/esp
   BR_IMAGE: esp32s31-buildroot:bookworm
   BR_VOLUME: esp32s31-br
+  IDF_IMAGE: espressif/idf:v6.1
 
 jobs:
   board-check:
@@ -36,7 +36,7 @@ jobs:
           submodules: recursive
 
       - name: Build Buildroot host image
-        run: docker build -f Containerfile -t "$BR_IMAGE" container
+        run: docker build -f container/Containerfile -t "$BR_IMAGE" container
 
       - name: Create Buildroot volume
         run: docker volume create "$BR_VOLUME"
@@ -55,12 +55,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ESP-IDF
-        uses: espressif/install-esp-idf-action@v1
-        with:
-          version: v6.1
-          tools-path: /opt/esp
-
       - name: Map board sdkconfig defaults
         id: board
         run: |
@@ -78,24 +72,27 @@ jobs:
           esac
 
       - name: Build loader for ${{ matrix.board }}
-        env:
-          BOARD: ${{ matrix.board }}
-        working-directory: bootloader
         run: |
-          echo "IDF_PATH=$IDF_PATH"
-          test -f "$IDF_PATH/export.sh"
-          . "$IDF_PATH/export.sh"
-          rm -f sdkconfig sdkconfig.old
-          # esp32s31 is still a preview target in IDF 6.1.
-          idf.py --preview \
-            -D SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
-            set-target esp32s31
-          idf.py --preview -B ../build/bootloader \
-            -D SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
-            build
-          ls -l ../build/bootloader/s31-linux-loader.bin \
-                ../build/bootloader/bootloader/bootloader.bin \
-                ../build/bootloader/partition_table/partition-table.bin
+          docker run --rm \
+            -e BOARD="${{ matrix.board }}" \
+            -e SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
+            -v "$PWD":/work -w /work/bootloader \
+            "$IDF_IMAGE" \
+            bash -lc '
+              set -euo pipefail
+              . "${IDF_PATH}/export.sh"
+              rm -f sdkconfig sdkconfig.old
+              # esp32s31 is still a preview target in IDF 6.1.
+              idf.py --preview \
+                -D SDKCONFIG_DEFAULTS="$SDKCONFIG_DEFAULTS" \
+                set-target esp32s31
+              idf.py --preview -B ../build/bootloader \
+                -D SDKCONFIG_DEFAULTS="$SDKCONFIG_DEFAULTS" \
+                build
+              ls -l ../build/bootloader/s31-linux-loader.bin \
+                    ../build/bootloader/bootloader/bootloader.bin \
+                    ../build/bootloader/partition_table/partition-table.bin
+            '
 
       - name: Upload loader artifacts
         uses: actions/upload-artifact@v4
@@ -116,21 +113,17 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install ESP-IDF (toolchain)
-        uses: espressif/install-esp-idf-action@v1
-        with:
-          version: v6.1
-          tools-path: /opt/esp
-
       - name: Build OpenSBI fw_jump
         run: |
-          echo "IDF_PATH=$IDF_PATH"
-          test -f "$IDF_PATH/export.sh"
-          . "$IDF_PATH/export.sh"
-          export IDF_TOOLS_PATH=/opt/esp
-          # Prefer the toolchain export.sh put on PATH.
-          make opensbi CROSS_COMPILE=riscv32-esp-elf-
-          ls -l build/opensbi.bin build/opensbi.elf
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            "$IDF_IMAGE" \
+            bash -lc '
+              set -euo pipefail
+              . "${IDF_PATH}/export.sh"
+              make opensbi CROSS_COMPILE=riscv32-esp-elf- GMAKE=make
+              ls -l build/opensbi.bin build/opensbi.elf
+            '
 
       - name: Upload OpenSBI artifacts
         uses: actions/upload-artifact@v4
@@ -155,7 +148,7 @@ jobs:
           submodules: recursive
 
       - name: Build Buildroot host image
-        run: docker build -f Containerfile -t "$BR_IMAGE" container
+        run: docker build -f container/Containerfile -t "$BR_IMAGE" container
 
       - name: Create Buildroot volume
         run: docker volume create "$BR_VOLUME"
