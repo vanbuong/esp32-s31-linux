@@ -12,7 +12,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IDF_PATH: /opt/esp/idf
   IDF_TOOLS_PATH: /opt/esp
   BR_IMAGE: esp32s31-buildroot:bookworm
   BR_VOLUME: esp32s31-br
@@ -37,7 +36,7 @@ jobs:
           submodules: recursive
 
       - name: Build Buildroot host image
-        run: docker build -t "$BR_IMAGE" container
+        run: docker build -f Containerfile -t "$BR_IMAGE" container
 
       - name: Create Buildroot volume
         run: docker volume create "$BR_VOLUME"
@@ -60,7 +59,6 @@ jobs:
         uses: espressif/install-esp-idf-action@v1
         with:
           version: v6.1
-          path: /opt/esp/idf
           tools-path: /opt/esp
 
       - name: Map board sdkconfig defaults
@@ -82,15 +80,17 @@ jobs:
       - name: Build loader for ${{ matrix.board }}
         env:
           BOARD: ${{ matrix.board }}
-          IDF_PATH: /opt/esp/idf
-          IDF_TOOLS_PATH: /opt/esp
         working-directory: bootloader
         run: |
-          . "${IDF_PATH}/export.sh"
+          echo "IDF_PATH=$IDF_PATH"
+          test -f "$IDF_PATH/export.sh"
+          . "$IDF_PATH/export.sh"
           rm -f sdkconfig sdkconfig.old
-          idf.py -D SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
+          # esp32s31 is still a preview target in IDF 6.1.
+          idf.py --preview \
+            -D SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
             set-target esp32s31
-          idf.py -B ../build/bootloader \
+          idf.py --preview -B ../build/bootloader \
             -D SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
             build
           ls -l ../build/bootloader/s31-linux-loader.bin \
@@ -120,15 +120,16 @@ jobs:
         uses: espressif/install-esp-idf-action@v1
         with:
           version: v6.1
-          path: /opt/esp/idf
           tools-path: /opt/esp
 
       - name: Build OpenSBI fw_jump
         run: |
-          . /opt/esp/idf/export.sh
-          export IDF_PATH=/opt/esp/idf
+          echo "IDF_PATH=$IDF_PATH"
+          test -f "$IDF_PATH/export.sh"
+          . "$IDF_PATH/export.sh"
           export IDF_TOOLS_PATH=/opt/esp
-          make opensbi
+          # Prefer the toolchain export.sh put on PATH.
+          make opensbi CROSS_COMPILE=riscv32-esp-elf-
           ls -l build/opensbi.bin build/opensbi.elf
 
       - name: Upload OpenSBI artifacts
@@ -154,7 +155,7 @@ jobs:
           submodules: recursive
 
       - name: Build Buildroot host image
-        run: docker build -t "$BR_IMAGE" container
+        run: docker build -f Containerfile -t "$BR_IMAGE" container
 
       - name: Create Buildroot volume
         run: docker volume create "$BR_VOLUME"

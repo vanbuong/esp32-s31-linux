@@ -215,7 +215,7 @@ bootloader:
 		echo 'ESP-IDF environment setup failed (run $(IDF_PATH)/install.sh)'; \
 		exit 1; \
 	fi; \
-	cd bootloader && idf.py -B ../$(BUILD_DIR)/bootloader \
+	cd bootloader && idf.py --preview -B ../$(BUILD_DIR)/bootloader \
 		-D SDKCONFIG_DEFAULTS="$(BOOTLOADER_SDKCONFIG_DEFAULTS)" build
 
 opensbi:
@@ -288,7 +288,7 @@ container-image:
 ifeq ($(HOST_OS),Darwin)
 	@"$(CONTAINER)" build -t "$(BR_IMAGE)" container
 else
-	@"$(CONTAINER)" build -t "$(BR_IMAGE)" container
+	@"$(CONTAINER)" build -f Containerfile -t "$(BR_IMAGE)" container
 endif
 
 # Buildroot must not run as root, so the volume is handed to the caller once.
