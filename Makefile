@@ -321,7 +321,7 @@ ci-kernel: kernel-patches br-volume
 	@$(BR_RUN) sh -c 'set -e; \
 		cd /work/$(BR_DIR); \
 		$(BR_MAKE) $(BR_DEFCONFIG); \
-		$(BR_MAKE) linux'; \
+		$(BR_MAKE) linux; \
 		test -f /br/output/images/Image; \
 		mkdir -p /work/$(BUILD_DIR); \
 		cp /br/output/images/Image /work/$(BUILD_DIR)/'
