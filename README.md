@@ -173,10 +173,10 @@ board-level power FET: power the socket from the header 3V3 rail. Use
 
 If you only have an SPI microSD breakout, use
 `BOARD=function-coreboard-1-spi-sd` instead. That profile leaves SDMMC off and
-drives the same J2 pads as SPI with Linux `spi-gpio` + `mmc_spi` (Espressif
-SDSPI mapping: CLK=SCLK GPIO24, CMD=MOSI GPIO25, D0=MISO GPIO20, D3=CS
-GPIO23). Throughput is modest until a GPSPI host driver lands; the card still
-appears as `/dev/mmcblk0` for the same rootfs layout.
+drives the same J2 pads as SPI from Linux GPSPI3 + `mmc_spi` (Espressif SDSPI
+mapping: CLK=SCLK GPIO24, CMD=MOSI GPIO25, D0=MISO GPIO20, D3=CS GPIO23).
+GPSPI3 is clocked from the 40 MHz XTAL and `spi-max-frequency` is set to
+40 MHz; the card appears as `/dev/mmcblk0` for the same rootfs layout.
 
 For the SDIO profiles, Linux drives the controller with the stock `dw_mmc`
 driver (the S31 SDHOST is a Synopsys DesignWare MSHC). Transfers use the
