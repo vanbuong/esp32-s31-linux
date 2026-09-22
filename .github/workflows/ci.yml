@@ -53,14 +53,15 @@ jobs:
       fail-fast: false
       matrix:
         board: [korvo-1, function-coreboard-1]
-    container:
-      image: espressif/idf:v6.1
-      options: --user root
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install ESP-IDF
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v6.1
+          path: /opt/esp/idf
+          tools-path: /opt/esp
 
       - name: Map board sdkconfig defaults
         id: board
@@ -81,6 +82,8 @@ jobs:
       - name: Build loader for ${{ matrix.board }}
         env:
           BOARD: ${{ matrix.board }}
+          IDF_PATH: /opt/esp/idf
+          IDF_TOOLS_PATH: /opt/esp
         working-directory: bootloader
         run: |
           . "${IDF_PATH}/export.sh"
