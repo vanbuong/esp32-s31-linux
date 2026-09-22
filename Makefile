@@ -249,8 +249,10 @@ kernel-patches: $(LINUX_GENERATED_PATCH)
 kernel-check: kernel-patches br-volume
 	@$(BR_RUN) sh -c 'set -e; \
 		cd /work/$(BR_DIR); \
-		test -f /br/dl/linux/linux-$(LINUX_VERSION).tar.xz || \
-			$(BR_MAKE) $(BR_DEFCONFIG) linux-source >/dev/null; \
+		if ! test -f /br/dl/linux/linux-$(LINUX_VERSION).tar.xz; then \
+			$(BR_MAKE) $(BR_DEFCONFIG); \
+			$(BR_MAKE) linux-source; \
+		fi; \
 		rm -rf /br/check && mkdir -p /br/check; \
 		tar -xf /br/dl/linux/linux-$(LINUX_VERSION).tar.xz \
 			--strip-components=1 -C /br/check; \
