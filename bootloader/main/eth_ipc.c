@@ -13,6 +13,7 @@
 #include "esp_err.h"
 #include "esp_eth.h"
 #include "esp_eth_mac.h"
+#include "esp_eth_mac_esp.h"
 #include "esp_eth_phy.h"
 #include "esp_event.h"
 #include "esp_intr_alloc.h"

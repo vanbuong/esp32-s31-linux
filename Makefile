@@ -2,10 +2,14 @@ SHELL := /bin/bash
 
 BUILD_DIR := build
 LOG_DIR := logs
+HOST_OS := $(shell uname -s)
 
 IDF_PATH ?= $(HOME)/esp/esp-idf
 IDF_TOOLS_PATH ?= $(HOME)/.espressif
 PYTHON ?= $(lastword $(sort $(wildcard $(IDF_TOOLS_PATH)/python_env/*/bin/python)))
+ifeq ($(PYTHON),)
+PYTHON := $(shell command -v python3 2>/dev/null)
+endif
 ESPTOOL := $(PYTHON) -m esptool
 # export.sh names its virtualenv after whatever python3 it finds, so a host
 # Python upgrade points it at one that was never installed.  Pin what exists.
@@ -13,8 +17,8 @@ IDF_PYTHON_ENV := $(patsubst %/bin/python,%,$(PYTHON))
 ESP_RISCV_BIN := $(lastword $(sort $(wildcard $(IDF_TOOLS_PATH)/tools/riscv32-esp-elf/*/riscv32-esp-elf/bin)))
 CROSS_COMPILE ?= $(ESP_RISCV_BIN)/riscv32-esp-elf-
 
-GMAKE ?= $(shell command -v gmake 2>/dev/null)
-JOBS ?= $(shell sysctl -n hw.ncpu 2>/dev/null || echo 4)
+GMAKE ?= $(shell command -v gmake 2>/dev/null || command -v make)
+JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 OPENSBI_DIR := external/opensbi
 OPENSBI_SRC := $(BUILD_DIR)/opensbi-src
@@ -45,7 +49,8 @@ $(error Unknown BOARD=$(BOARD); use korvo-1 or function-coreboard-1)
 endif
 
 # Buildroot cannot build on macOS, so it runs in a container.  Its output/ and
-# dl/ stay in a volume; several gigabytes have no business on virtiofs.
+# dl/ stay in a volume; several gigabytes have no business on virtiofs.  On
+# Linux CI the same Containerfile is built with Docker.
 BR_DIR := external/buildroot
 BR_IMAGE ?= esp32s31-buildroot:bookworm
 BR_VOLUME ?= esp32s31-br
@@ -56,13 +61,23 @@ LINUX_VERSION := $(shell sed -n 's/^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="\(.*\
 BR_MEMORY ?= 8G
 BR_OUT := $(BUILD_DIR)/buildroot
 BR_MAKE := make O=/br/output BR2_EXTERNAL=/work/br2-external BR2_DL_DIR=/br/dl
+
+ifeq ($(HOST_OS),Darwin)
 CONTAINER ?= $(shell command -v container 2>/dev/null)
 BR_RUN = "$(CONTAINER)" run --rm --cpus $(JOBS) --memory $(BR_MEMORY) \
 	--uid $(shell id -u) --gid $(shell id -g) -e HOME=/br/home \
 	-v $(BR_VOLUME):/br -v "$(CURDIR)":/work "$(BR_IMAGE)"
-# The same image without the build volume, for checks that only read the tree.
 BR_TOOLS = "$(CONTAINER)" run --rm --uid $(shell id -u) --gid $(shell id -g) \
 	-v "$(CURDIR)":/work "$(BR_IMAGE)"
+else
+CONTAINER ?= $(shell command -v docker 2>/dev/null)
+BR_RUN = "$(CONTAINER)" run --rm \
+	--user $(shell id -u):$(shell id -g) -e HOME=/br/home -e BR2_JLEVEL=$(JOBS) \
+	-v $(BR_VOLUME):/br -v "$(CURDIR)":/work -w /work "$(BR_IMAGE)"
+BR_TOOLS = "$(CONTAINER)" run --rm \
+	--user $(shell id -u):$(shell id -g) \
+	-v "$(CURDIR)":/work -w /work "$(BR_IMAGE)"
+endif
 
 INITRAMFS_INIT := $(BR_BOARD_DIR)/init
 SD_DISK ?=
@@ -90,7 +105,7 @@ INITRAMFS_OFFSET := 0xa20000
 
 .PHONY: help check ports build bootloader opensbi kernel kernel-patches \
 	kernel-check kernel-clean kernel-vmlinux kernel-menuconfig \
-	kernel-saveconfig \
+	kernel-saveconfig ci-board-check ci-kernel \
 	container-image \
 	br-volume br-artifacts rootfs rootfs-menuconfig initramfs sdcard sdpart \
 	sdwrite sdroot flash monitor openocd clean
@@ -102,6 +117,7 @@ help:
 		'  BOARD=$(BOARD)   (korvo-1 | function-coreboard-1)' \
 		'' \
 		'  make check                         verify host tools and submodules' \
+		'  make ci-board-check                validate both board configs (CI)' \
 		'  make ports                         list connected serial devices' \
 		'  make build                         build loader, OpenSBI, Linux, rootfs' \
 		'  make flash FLASH_PORT=/dev/cu.X    build and flash the complete image' \
@@ -149,15 +165,27 @@ help:
 		'initramfs that switch_roots into it.'
 
 check:
-	@test "$$(uname -s)" = Darwin || { echo 'this build is supported on macOS only'; exit 1; }
-	@test -n "$(PYTHON)" -a -x "$(PYTHON)" || { echo 'missing ESP-IDF Python environment'; exit 1; }
+ifneq ($(HOST_OS),Darwin)
+	@test -n "$${CI:-}" || { echo 'interactive builds are documented for macOS; set CI=1 to skip this check'; exit 1; }
+endif
+	@test -n "$(PYTHON)" -a -x "$(PYTHON)" || { echo 'missing Python (ESP-IDF env or python3)'; exit 1; }
 	@test -n "$(ESP_RISCV_BIN)" -a -x "$(CROSS_COMPILE)gcc" || { echo 'missing Espressif RISC-V toolchain'; exit 1; }
 	@test -n "$(GMAKE)" -a -x "$(GMAKE)" || { echo 'missing GNU make'; exit 1; }
 	@test -f "$(IDF_PATH)/export.sh" || { echo 'missing ESP-IDF at $(IDF_PATH)'; exit 1; }
-	@test -n "$(CONTAINER)" -a -x "$(CONTAINER)" || { echo 'missing the container CLI (Buildroot cannot build on macOS)'; exit 1; }
+	@test -n "$(CONTAINER)" -a -x "$(CONTAINER)" || { \
+		if test "$(HOST_OS)" = Darwin; then \
+			echo 'missing the container CLI (Buildroot cannot build on macOS)'; \
+		else \
+			echo 'missing docker (Buildroot host container)'; \
+		fi; exit 1; }
+ifeq ($(HOST_OS),Darwin)
 	@"$(CONTAINER)" system status >/dev/null 2>&1 || { echo 'container services are not running: container system start'; exit 1; }
 	@"$(PYTHON)" -c 'import serial' || { echo 'missing pyserial in ESP-IDF Python environment'; exit 1; }
+endif
 	@git submodule status --recursive
+
+ci-board-check:
+	@bash scripts/ci-board-check.sh
 
 ports:
 	@"$(PYTHON)" -m serial.tools.list_ports -v
@@ -168,12 +196,18 @@ build: bootloader opensbi rootfs initramfs
 # sdkconfig every build, so edits to the defaults would never take effect.
 # The defaults win here, including over "idf.py menuconfig".
 bootloader:
+	@mkdir -p "$(BUILD_DIR)"
+	@if test -f "$(BUILD_DIR)/bootloader.board" && \
+		test "$$(cat "$(BUILD_DIR)/bootloader.board")" != "$(BOARD)"; then \
+		echo "BOARD changed to $(BOARD); regenerating bootloader/sdkconfig"; \
+		rm -f bootloader/sdkconfig; \
+	fi
+	@echo "$(BOARD)" > "$(BUILD_DIR)/bootloader.board"
 	@if test -f bootloader/sdkconfig && \
 		test bootloader/sdkconfig.defaults -nt bootloader/sdkconfig; then \
 		echo 'sdkconfig.defaults changed; regenerating bootloader/sdkconfig'; \
 		rm -f bootloader/sdkconfig; \
 	fi
-	@mkdir -p "$(BUILD_DIR)"
 	@export IDF_PYTHON_ENV_PATH="$(IDF_PYTHON_ENV)"; \
 	export BOARD="$(BOARD)"; \
 	if ! source "$(IDF_PATH)/export.sh" >"$(BUILD_DIR)/idf-export.log" 2>&1; then \
@@ -250,17 +284,47 @@ kernel-saveconfig: br-volume
 	@git diff --stat -- $(BR_BOARD_DIR)/linux.config
 
 container-image:
-	@test -n "$(CONTAINER)" || { echo 'missing the container CLI'; exit 1; }
+	@test -n "$(CONTAINER)" || { echo 'missing container/docker CLI'; exit 1; }
+ifeq ($(HOST_OS),Darwin)
 	@"$(CONTAINER)" build -t "$(BR_IMAGE)" container
+else
+	@"$(CONTAINER)" build -t "$(BR_IMAGE)" container
+endif
 
 # Buildroot must not run as root, so the volume is handed to the caller once.
 br-volume:
-	@test -n "$(CONTAINER)" || { echo 'missing the container CLI'; exit 1; }
+	@test -n "$(CONTAINER)" || { echo 'missing container/docker CLI'; exit 1; }
+ifeq ($(HOST_OS),Darwin)
 	@"$(CONTAINER)" volume inspect "$(BR_VOLUME)" >/dev/null 2>&1 || { \
 		echo "creating the $(BR_VOLUME) volume ($(BR_VOLUME_SIZE))"; \
 		"$(CONTAINER)" volume create -s $(BR_VOLUME_SIZE) "$(BR_VOLUME)"; \
 		"$(CONTAINER)" run --rm --uid 0 --gid 0 -v $(BR_VOLUME):/br "$(BR_IMAGE)" \
 			chown -R $(shell id -u):$(shell id -g) /br; }
+else
+	@"$(CONTAINER)" volume inspect "$(BR_VOLUME)" >/dev/null 2>&1 || { \
+		echo "creating the $(BR_VOLUME) docker volume"; \
+		"$(CONTAINER)" volume create "$(BR_VOLUME)"; \
+		"$(CONTAINER)" run --rm --user 0:0 -v $(BR_VOLUME):/br "$(BR_IMAGE)" \
+			chown -R $(shell id -u):$(shell id -g) /br; }
+endif
+
+# CI builds only the kernel Image for the selected BOARD (builtin DTB included).
+# Full rootfs stays a local / macOS-container concern.
+ci-kernel: kernel-patches br-volume
+	@$(BR_RUN) sh -c 'set -e; \
+		cd /work/$(BR_DIR); \
+		$(BR_MAKE) $(BR_DEFCONFIG); \
+		$(BR_MAKE) linux'; \
+		test -f /br/output/images/Image; \
+		mkdir -p /work/$(BUILD_DIR); \
+		cp /br/output/images/Image /work/$(BUILD_DIR)/'
+	@"$(PYTHON)" -c 'import pathlib, struct, zlib; \
+p = pathlib.Path("$(BUILD_DIR)/Image"); \
+data = p.read_bytes(); \
+pathlib.Path("$(BUILD_DIR)/linux.size").write_bytes( \
+    struct.pack("<III", 0x455A4953, len(data), zlib.crc32(data))); \
+print("linux.size: %d bytes" % len(data))'
+	@ls -l "$(BUILD_DIR)/Image" "$(BUILD_DIR)/linux.size"
 
 # The checked-in defconfig is the source of truth and is reapplied every build.
 rootfs: kernel-patches br-volume

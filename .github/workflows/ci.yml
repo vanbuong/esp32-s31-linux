@@ -1,0 +1,194 @@
+# Build and check both ESP32-S31 board profiles.
+name: CI
+
+on:
+  push:
+    branches: [main, cursor/**]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IDF_PATH: /opt/esp/idf
+  IDF_TOOLS_PATH: /opt/esp
+  BR_IMAGE: esp32s31-buildroot:bookworm
+  BR_VOLUME: esp32s31-br
+
+jobs:
+  board-check:
+    name: Board config + patch hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate both board profiles
+        run: bash scripts/ci-board-check.sh
+
+  kernel-check:
+    name: Kernel patches apply (7.1.3)
+    runs-on: ubuntu-latest
+    needs: board-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Buildroot host image
+        run: docker build -t "$BR_IMAGE" container
+
+      - name: Create Buildroot volume
+        run: docker volume create "$BR_VOLUME"
+
+      - name: Dry-run the kernel patch series
+        run: make kernel-check BOARD=korvo-1
+
+  bootloader:
+    name: Bootloader (${{ matrix.board }})
+    runs-on: ubuntu-latest
+    needs: board-check
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [korvo-1, function-coreboard-1]
+    container:
+      image: espressif/idf:v6.1
+      options: --user root
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Map board sdkconfig defaults
+        id: board
+        run: |
+          case "${{ matrix.board }}" in
+            korvo-1)
+              echo "defaults=sdkconfig.defaults;sdkconfig.defaults.korvo-1" >> "$GITHUB_OUTPUT"
+              ;;
+            function-coreboard-1)
+              echo "defaults=sdkconfig.defaults;sdkconfig.defaults.function-coreboard-1" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "unknown board" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Build loader for ${{ matrix.board }}
+        env:
+          BOARD: ${{ matrix.board }}
+        working-directory: bootloader
+        run: |
+          . "${IDF_PATH}/export.sh"
+          rm -f sdkconfig sdkconfig.old
+          idf.py -D SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
+            set-target esp32s31
+          idf.py -B ../build/bootloader \
+            -D SDKCONFIG_DEFAULTS="${{ steps.board.outputs.defaults }}" \
+            build
+          ls -l ../build/bootloader/s31-linux-loader.bin \
+                ../build/bootloader/bootloader/bootloader.bin \
+                ../build/bootloader/partition_table/partition-table.bin
+
+      - name: Upload loader artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootloader-${{ matrix.board }}
+          path: |
+            build/bootloader/s31-linux-loader.bin
+            build/bootloader/bootloader/bootloader.bin
+            build/bootloader/partition_table/partition-table.bin
+          if-no-files-found: error
+
+  opensbi:
+    name: OpenSBI
+    runs-on: ubuntu-latest
+    needs: board-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ESP-IDF (toolchain)
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v6.1
+          path: /opt/esp/idf
+          tools-path: /opt/esp
+
+      - name: Build OpenSBI fw_jump
+        run: |
+          . /opt/esp/idf/export.sh
+          export IDF_PATH=/opt/esp/idf
+          export IDF_TOOLS_PATH=/opt/esp
+          make opensbi
+          ls -l build/opensbi.bin build/opensbi.elf
+
+      - name: Upload OpenSBI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: opensbi
+          path: |
+            build/opensbi.bin
+            build/opensbi.elf
+          if-no-files-found: error
+
+  kernel:
+    name: Kernel (${{ matrix.board }})
+    runs-on: ubuntu-latest
+    needs: [board-check, kernel-check]
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [korvo-1, function-coreboard-1]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Buildroot host image
+        run: docker build -t "$BR_IMAGE" container
+
+      - name: Create Buildroot volume
+        run: docker volume create "$BR_VOLUME"
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: /tmp/br-dl-cache
+          key: br-dl-${{ hashFiles('br2-external/configs/*.defconfig', 'linux/patches/**') }}
+          restore-keys: br-dl-
+
+      - name: Seed download cache into the volume
+        run: |
+          docker run --rm -v "$BR_VOLUME":/br -v /tmp/br-dl-cache:/cache \
+            "$BR_IMAGE" bash -c '
+              mkdir -p /br/dl /br/home /br/output
+              if [ -d /cache ] && [ "$(ls -A /cache 2>/dev/null)" ]; then
+                cp -a /cache/. /br/dl/
+              fi
+              chown -R '"$(id -u):$(id -g)"' /br
+            '
+
+      - name: Build Linux Image for ${{ matrix.board }}
+        run: make ci-kernel BOARD=${{ matrix.board }}
+
+      - name: Refresh download cache from the volume
+        if: always()
+        run: |
+          mkdir -p /tmp/br-dl-cache
+          docker run --rm -v "$BR_VOLUME":/br -v /tmp/br-dl-cache:/cache \
+            "$BR_IMAGE" bash -c 'cp -a /br/dl/. /cache/ 2>/dev/null || true'
+
+      - name: Upload kernel Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.board }}
+          path: |
+            build/Image
+            build/linux.size
+          if-no-files-found: error

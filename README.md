@@ -9,7 +9,9 @@ PSRAM as Linux memory. Two boards are supported:
 | `function-coreboard-1` | ESP32-S31-Function-CoreBoard-1 with RGMII Gigabit Ethernet, external SDIO microSD on J2, and SPI ILI9341 |
 
 Select the board on every Make invocation that builds the loader or rootfs,
-for example `make BOARD=function-coreboard-1 build`.
+for example `make BOARD=function-coreboard-1 build`. GitHub Actions builds
+both boards on every push and pull request (loader, OpenSBI, kernel Image,
+and patch hygiene); see `.github/workflows/ci.yml`.
 
 The verified boot chain is:
 
