@@ -215,7 +215,6 @@ void start_eth(void)
     eth_esp32_emac_config_t esp32_emac = ETH_ESP32_EMAC_DEFAULT_CONFIG();
     esp_eth_mac_t *mac;
     esp_eth_phy_t *phy;
-    esp_eth_config_t config;
     esp_err_t err;
 
     err = esp_event_loop_create_default();
@@ -247,7 +246,8 @@ void start_eth(void)
         return;
     }
 
-    config = ETH_DEFAULT_CONFIG(mac, phy);
+    /* ETH_DEFAULT_CONFIG is a brace initializer; it cannot be assigned. */
+    esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
     err = esp_eth_driver_install(&config, &eth_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "driver install failed: %s", esp_err_to_name(err));

@@ -38,9 +38,6 @@ jobs:
       - name: Build Buildroot host image
         run: docker build -f container/Containerfile -t "$BR_IMAGE" container
 
-      - name: Create Buildroot volume
-        run: docker volume create "$BR_VOLUME"
-
       - name: Dry-run the kernel patch series
         run: make kernel-check BOARD=korvo-1
 

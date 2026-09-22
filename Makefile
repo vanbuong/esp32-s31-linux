@@ -292,20 +292,25 @@ else
 endif
 
 # Buildroot must not run as root, so the volume is handed to the caller once.
+# Always (re)create /br/{output,dl,home} and chown: CI may have created an
+# empty root-owned volume before this target runs, which leaves mkdir -p
+# /br/output failing and Buildroot reporting output directory "".
 br-volume:
 	@test -n "$(CONTAINER)" || { echo 'missing container/docker CLI'; exit 1; }
 ifeq ($(HOST_OS),Darwin)
 	@"$(CONTAINER)" volume inspect "$(BR_VOLUME)" >/dev/null 2>&1 || { \
 		echo "creating the $(BR_VOLUME) volume ($(BR_VOLUME_SIZE))"; \
-		"$(CONTAINER)" volume create -s $(BR_VOLUME_SIZE) "$(BR_VOLUME)"; \
-		"$(CONTAINER)" run --rm --uid 0 --gid 0 -v $(BR_VOLUME):/br "$(BR_IMAGE)" \
-			chown -R $(shell id -u):$(shell id -g) /br; }
+		"$(CONTAINER)" volume create -s $(BR_VOLUME_SIZE) "$(BR_VOLUME)"; }
+	@"$(CONTAINER)" run --rm --uid 0 --gid 0 -v $(BR_VOLUME):/br "$(BR_IMAGE)" \
+		sh -c 'mkdir -p /br/output /br/dl /br/home && \
+			chown -R $(shell id -u):$(shell id -g) /br'
 else
 	@"$(CONTAINER)" volume inspect "$(BR_VOLUME)" >/dev/null 2>&1 || { \
 		echo "creating the $(BR_VOLUME) docker volume"; \
-		"$(CONTAINER)" volume create "$(BR_VOLUME)"; \
-		"$(CONTAINER)" run --rm --user 0:0 -v $(BR_VOLUME):/br "$(BR_IMAGE)" \
-			chown -R $(shell id -u):$(shell id -g) /br; }
+		"$(CONTAINER)" volume create "$(BR_VOLUME)"; }
+	@"$(CONTAINER)" run --rm --user 0:0 -v $(BR_VOLUME):/br "$(BR_IMAGE)" \
+		sh -c 'mkdir -p /br/output /br/dl /br/home && \
+			chown -R $(shell id -u):$(shell id -g) /br'
 endif
 
 # CI builds only the kernel Image for the selected BOARD (builtin DTB included).
