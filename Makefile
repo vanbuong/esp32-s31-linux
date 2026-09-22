@@ -34,9 +34,14 @@ LINUX_GENERATED_PATCH := linux/patches/0000-esp32s31-add-source-files.patch
 # Board selection.  korvo-1 is the historical default; function-coreboard-1
 # enables on-board RGMII Gigabit Ethernet, an external SDIO microSD on the
 # dedicated SDMMC pads, and an SPI ILI9341 panel on the J2 header pins
-# documented in bootloader/main/board.h.
+# documented in bootloader/main/board.h.  function-coreboard-1-spi-sd is the
+# same board with an SPI microSD socket on those SDMMC pads (spi-gpio).
 BOARD ?= korvo-1
-ifeq ($(BOARD),function-coreboard-1)
+ifeq ($(BOARD),function-coreboard-1-spi-sd)
+BR_DEFCONFIG := esp32s31_fcb1_spi_sd_defconfig
+BR_BOARD_DIR := br2-external/board/esp32s31-fcb1-spi-sd
+BOOTLOADER_SDKCONFIG_DEFAULTS := sdkconfig.defaults;sdkconfig.defaults.function-coreboard-1
+else ifeq ($(BOARD),function-coreboard-1)
 BR_DEFCONFIG := esp32s31_fcb1_defconfig
 BR_BOARD_DIR := br2-external/board/esp32s31-fcb1
 BOOTLOADER_SDKCONFIG_DEFAULTS := sdkconfig.defaults;sdkconfig.defaults.function-coreboard-1
@@ -45,7 +50,7 @@ BR_DEFCONFIG := esp32s31_defconfig
 BR_BOARD_DIR := br2-external/board/esp32s31
 BOOTLOADER_SDKCONFIG_DEFAULTS := sdkconfig.defaults;sdkconfig.defaults.korvo-1
 else
-$(error Unknown BOARD=$(BOARD); use korvo-1 or function-coreboard-1)
+$(error Unknown BOARD=$(BOARD); use korvo-1, function-coreboard-1, or function-coreboard-1-spi-sd)
 endif
 
 # Buildroot cannot build on macOS, so it runs in a container.  Its output/ and
@@ -114,7 +119,7 @@ help:
 	@printf '%s\n' \
 		'ESP32-S31 Linux (macOS host)' \
 		'' \
-		'  BOARD=$(BOARD)   (korvo-1 | function-coreboard-1)' \
+		'  BOARD=$(BOARD)   (korvo-1 | function-coreboard-1 | function-coreboard-1-spi-sd)' \
 		'' \
 		'  make check                         verify host tools and submodules' \
 		'  make ci-board-check                validate both board configs (CI)' \

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# Sanity-check both board profiles without building firmware.
+# Sanity-check board profiles without building firmware.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -65,7 +65,13 @@ check_board function-coreboard-1 \
 	esp32s31_function_coreboard_1 \
 	sdkconfig.defaults.function-coreboard-1
 
-# FCB1 must enable the Ethernet IPC netdev; Korvo must leave it off.
+check_board function-coreboard-1-spi-sd \
+	esp32s31_fcb1_spi_sd_defconfig \
+	br2-external/board/esp32s31-fcb1-spi-sd \
+	esp32s31_function_coreboard_1_spi_sd \
+	sdkconfig.defaults.function-coreboard-1
+
+# FCB1 variants must enable the Ethernet IPC netdev; Korvo must leave it off.
 if ! grep -q '^CONFIG_ESP32S31_ETH=y$' \
 	br2-external/board/esp32s31-fcb1/linux.config; then
 	echo "FAIL: FCB1 linux.config missing CONFIG_ESP32S31_ETH=y"
@@ -73,12 +79,49 @@ if ! grep -q '^CONFIG_ESP32S31_ETH=y$' \
 else
 	echo "ok      FCB1 enables ESP32S31_ETH"
 fi
+if ! grep -q '^CONFIG_ESP32S31_ETH=y$' \
+	br2-external/board/esp32s31-fcb1-spi-sd/linux.config; then
+	echo "FAIL: FCB1-SPI-SD linux.config missing CONFIG_ESP32S31_ETH=y"
+	fail=1
+else
+	echo "ok      FCB1-SPI-SD enables ESP32S31_ETH"
+fi
 if ! grep -q '^# CONFIG_ETHERNET is not set$' \
 	br2-external/board/esp32s31/linux.config; then
 	echo "FAIL: Korvo linux.config should leave CONFIG_ETHERNET unset"
 	fail=1
 else
 	echo "ok      Korvo leaves Ethernet disabled"
+fi
+
+# SDIO profile keeps DW MMC; SPI-SD profile uses mmc_spi + spi-gpio.
+if ! grep -q '^CONFIG_MMC_DW=y$' \
+	br2-external/board/esp32s31-fcb1/linux.config; then
+	echo "FAIL: FCB1 linux.config missing CONFIG_MMC_DW=y"
+	fail=1
+else
+	echo "ok      FCB1 enables MMC_DW"
+fi
+if ! grep -q '^CONFIG_MMC_SPI=y$' \
+	br2-external/board/esp32s31-fcb1-spi-sd/linux.config; then
+	echo "FAIL: FCB1-SPI-SD linux.config missing CONFIG_MMC_SPI=y"
+	fail=1
+else
+	echo "ok      FCB1-SPI-SD enables MMC_SPI"
+fi
+if ! grep -q '^CONFIG_SPI_GPIO=y$' \
+	br2-external/board/esp32s31-fcb1-spi-sd/linux.config; then
+	echo "FAIL: FCB1-SPI-SD linux.config missing CONFIG_SPI_GPIO=y"
+	fail=1
+else
+	echo "ok      FCB1-SPI-SD enables SPI_GPIO"
+fi
+if ! grep -q 'compatible = "mmc-spi-slot"' \
+	linux/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts; then
+	echo "FAIL: SPI-SD DTS missing mmc-spi-slot"
+	fail=1
+else
+	echo "ok      SPI-SD DTS has mmc-spi-slot"
 fi
 
 # The generated source patch must match linux/ + shared IPC headers.
@@ -91,8 +134,9 @@ else
 	echo "ok      generated kernel source patch is current"
 fi
 
-# DTB Makefile must list both boards.
-for dtb in esp32s31_generic esp32s31_korvo1 esp32s31_function_coreboard_1; do
+# DTB Makefile must list every board DTB.
+for dtb in esp32s31_generic esp32s31_korvo1 \
+	esp32s31_function_coreboard_1 esp32s31_function_coreboard_1_spi_sd; do
 	if ! grep -q "$dtb" linux/arch/riscv/boot/dts/espressif/Makefile; then
 		echo "FAIL: dts Makefile missing $dtb"
 		fail=1

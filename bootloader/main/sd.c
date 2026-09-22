@@ -24,6 +24,8 @@
 
 static const char *TAG = "s31-linux-sd";
 
+#if BOARD_HAS_SDMMC
+
 static esp_err_t configure_sd_pin(gpio_num_t gpio, bool pull_up)
 {
     esp_err_t err;
@@ -144,3 +146,45 @@ void init_sd_card(void)
              BOARD_NAME, source_hz, source_hz / div, div,
              sdmmc_ll_get_version_id(&SDMMC));
 }
+
+#elif BOARD_HAS_SPI_SD
+
+void init_sd_card(void)
+{
+    static const gpio_num_t pins[] = {
+        BOARD_SPI_SD_PIN_SCLK,
+        BOARD_SPI_SD_PIN_MOSI,
+        BOARD_SPI_SD_PIN_MISO,
+        BOARD_SPI_SD_PIN_CS,
+    };
+    esp_err_t err;
+
+    /*
+     * Leave the pads as GPIO with pull-ups; Linux spi-gpio + mmc_spi own the
+     * bus after the handoff.  Do not claim them as SDMMC.
+     */
+    for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+        err = gpio_reset_pin(pins[i]);
+        if (err == ESP_OK) {
+            err = gpio_set_pull_mode(pins[i], GPIO_PULLUP_ONLY);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "failed to prep SPI SD GPIO %d: %s",
+                     pins[i], esp_err_to_name(err));
+            return;
+        }
+    }
+
+    ESP_LOGI(TAG,
+             "SPI microSD (%s): SCLK=%d MOSI=%d MISO=%d CS=%d (Linux spi-gpio)",
+             BOARD_NAME, BOARD_SPI_SD_PIN_SCLK, BOARD_SPI_SD_PIN_MOSI,
+             BOARD_SPI_SD_PIN_MISO, BOARD_SPI_SD_PIN_CS);
+}
+
+#else
+
+void init_sd_card(void)
+{
+}
+
+#endif

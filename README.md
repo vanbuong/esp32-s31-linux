@@ -7,10 +7,11 @@ PSRAM as Linux memory. Two boards are supported:
 | --- | --- |
 | `korvo-1` (default) | ESP32-S31 Korvo-1 with 800×480 RGB LCD and onboard microSD |
 | `function-coreboard-1` | ESP32-S31-Function-CoreBoard-1 with RGMII Gigabit Ethernet, external SDIO microSD on J2, and SPI ILI9341 |
+| `function-coreboard-1-spi-sd` | Same Function-CoreBoard-1, but J2 wired as an SPI microSD socket (CLK/CMD/D0/D3) |
 
 Select the board on every Make invocation that builds the loader or rootfs,
-for example `make BOARD=function-coreboard-1 build`. GitHub Actions builds
-both boards on every push and pull request (loader, OpenSBI, kernel Image,
+for example `make BOARD=function-coreboard-1-spi-sd build`. GitHub Actions builds
+all boards on every push and pull request (loader, OpenSBI, kernel Image,
 SD-card `rootfs.ext2`/`sdcard.img`, initramfs, and patch hygiene); see
 `.github/workflows/ci.yml`.
 
@@ -167,20 +168,26 @@ since the slot has no CD/WP contacts.
 
 Function-CoreBoard-1 exposes the same SDMMC slot-0 pads on header J2
 (D0–D3/CLK/CMD = GPIO20–25) for an external SDIO microSD socket. There is no
-board-level power FET, so the socket is expected to take 3V3 from the header.
-The loader skips the Korvo GPIO39 power step and otherwise uses the same host
-bring-up.
+board-level power FET: power the socket from the header 3V3 rail. Use
+`BOARD=function-coreboard-1` for that SDIO wiring.
 
-Linux drives the controller with the stock `dw_mmc` driver (the S31 SDHOST
-is a Synopsys DesignWare MSHC). Transfers use the controller's internal DMA:
-the host's PIO FIFO port is non-functional in silicon (CPU reads never pop
-the FIFO, they return the same latched word, and ESP-IDF never touches that
-register either), so IDMAC is the only working data path. Patch
-`0003-mmc-dw_mmc-add-esp32s31-support.patch` identifies the SoC integration
-and takes the descriptor ring from `dma_alloc_noncoherent()` instead of
-`dma_alloc_coherent()`, syncing the whole ring around each ownership
-hand-off. The ring is synced as a unit because descriptors are 16 bytes and
-several share a cache line.
+If you only have an SPI microSD breakout, use
+`BOARD=function-coreboard-1-spi-sd` instead. That profile leaves SDMMC off and
+drives the same J2 pads as SPI with Linux `spi-gpio` + `mmc_spi` (Espressif
+SDSPI mapping: CLK=SCLK GPIO24, CMD=MOSI GPIO25, D0=MISO GPIO20, D3=CS
+GPIO23). Throughput is modest until a GPSPI host driver lands; the card still
+appears as `/dev/mmcblk0` for the same rootfs layout.
+
+For the SDIO profiles, Linux drives the controller with the stock `dw_mmc`
+driver (the S31 SDHOST is a Synopsys DesignWare MSHC). Transfers use the
+controller's internal DMA: the host's PIO FIFO port is non-functional in
+silicon (CPU reads never pop the FIFO, they return the same latched word, and
+ESP-IDF never touches that register either), so IDMAC is the only working
+data path. Patch `0003-mmc-dw_mmc-add-esp32s31-support.patch` identifies the
+SoC integration and takes the descriptor ring from `dma_alloc_noncoherent()`
+instead of `dma_alloc_coherent()`, syncing the whole ring around each
+ownership hand-off. The ring is synced as a unit because descriptors are 16
+bytes and several share a cache line.
 
 FAT (VFAT) and ext4 are enabled. The card carries both: an MBR whose first
 partition is FAT32 and whose second is the ext4 root. `/etc/init.d/S10sdcard`

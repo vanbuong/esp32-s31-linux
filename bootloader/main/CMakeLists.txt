@@ -4,7 +4,9 @@ idf_component_register(SRCS main.c display.c sd.c wifi_ipc.c eth_ipc.c
                                 esp_driver_gpio esp_driver_spi heap esp_wifi esp_event esp_eth
                        INCLUDE_DIRS "." "../../shared")
 
-if(DEFINED ENV{BOARD} AND "$ENV{BOARD}" STREQUAL "function-coreboard-1")
+if(DEFINED ENV{BOARD} AND "$ENV{BOARD}" STREQUAL "function-coreboard-1-spi-sd")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE BOARD_FUNCTION_COREBOARD_1_SPI_SD)
+elseif(DEFINED ENV{BOARD} AND "$ENV{BOARD}" STREQUAL "function-coreboard-1")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE BOARD_FUNCTION_COREBOARD_1)
 else()
     target_compile_definitions(${COMPONENT_LIB} PRIVATE BOARD_KORVO_1)

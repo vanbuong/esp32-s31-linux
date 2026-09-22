@@ -414,11 +414,12 @@ diff --git a/arch/riscv/boot/dts/espressif/Makefile b/arch/riscv/boot/dts/espres
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/boot/dts/espressif/Makefile
-@@ -0,0 +1,4 @@
+@@ -0,0 +1,5 @@
 +# SPDX-License-Identifier: GPL-2.0
 +dtb-$(CONFIG_ARCH_ESPRESSIF) += esp32s31_generic.dtb
 +dtb-$(CONFIG_ARCH_ESPRESSIF) += esp32s31_korvo1.dtb
 +dtb-$(CONFIG_ARCH_ESPRESSIF) += esp32s31_function_coreboard_1.dtb
++dtb-$(CONFIG_ARCH_ESPRESSIF) += esp32s31_function_coreboard_1_spi_sd.dtb
 diff --git a/arch/riscv/boot/dts/espressif/esp32s31.dtsi b/arch/riscv/boot/dts/espressif/esp32s31.dtsi
 new file mode 100644
 --- /dev/null
@@ -692,6 +693,79 @@ new file mode 100644
 +};
 +
 +&sdmmc0 { status = "okay"; };
+diff --git a/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts b/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts
+new file mode 100644
+--- /dev/null
++++ b/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts
+@@ -0,0 +1,68 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * ESP32-S31 Function-CoreBoard-1 with SPI microSD Device Tree Source
++ * Author: Marco Müller <hello@annoyedmilk.ch>
++ *
++ * Same on-board Ethernet / USB / Wi-Fi as function_coreboard_1, but the J2
++ * SDMMC pads are wired as an SPI microSD socket (CLK/CMD/D0/D3) and driven
++ * from Linux with spi-gpio + mmc_spi until a GPSPI host driver exists.
++ */
++/dts-v1/;
++#include "esp32s31.dtsi"
++#include <dt-bindings/gpio/gpio.h>
++
++/ {
++	model = "Espressif ESP32-S31 Function-CoreBoard-1 (SPI SD)";
++	compatible = "esp,esp32s31-function-coreboard-1-spi-sd",
++		     "esp,esp32s31-function-coreboard-1", "esp,esp32s31";
++
++	chosen {
++		linux,initrd-start = <0x50800000>;
++		linux,initrd-end = <0x50A00000>;
++		stdout-path = "serial0:115200n8";
++
++		framebuffer: framebuffer@50f40000 {
++			compatible = "simple-framebuffer";
++			reg = <0x50f40000 (320 * 240 * 2)>;
++			width = <320>;
++			height = <240>;
++			stride = <(320 * 2)>;
++			format = "r5g6b5";
++			memory-region = <&fb_region>;
++		};
++	};
++
++	ethernet: ethernet@2f060000 {
++		compatible = "esp,esp32s31-eth";
++		reg = <0x2f060000 0x18000>, <0x20586018 0x8>;
++		reg-names = "ipc", "doorbell";
++		interrupt-parent = <&clic>;
++		interrupts = <36 67 IRQ_TYPE_LEVEL_HIGH>;
++	};
++
++	/*
++	 * Bit-banged SPI on the J2 SDMMC pads (Espressif SDSPI mapping).
++	 * Throughput is modest; enough for rootfs bring-up without GPSPI.
++	 */
++	spi_gpio: spi {
++		compatible = "spi-gpio";
++		#address-cells = <1>;
++		#size-cells = <0>;
++		gpio-sck = <&gpio 24 GPIO_ACTIVE_HIGH>;
++		gpio-mosi = <&gpio 25 GPIO_ACTIVE_HIGH>;
++		gpio-miso = <&gpio 20 GPIO_ACTIVE_HIGH>;
++		num-chipselects = <1>;
++		cs-gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
++
++		mmc_spi: mmc-slot@0 {
++			compatible = "mmc-spi-slot";
++			reg = <0>;
++			spi-max-frequency = <2000000>;
++			voltage-ranges = <3300 3300>;
++			broken-cd;
++		};
++	};
++};
++
++/* Native SDMMC stays off; SPI owns the same header pads. */
++&sdmmc0 { status = "disabled"; };
 diff --git a/arch/riscv/boot/dts/espressif/esp32s31_generic.dts b/arch/riscv/boot/dts/espressif/esp32s31_generic.dts
 new file mode 100644
 --- /dev/null

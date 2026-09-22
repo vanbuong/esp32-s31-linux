@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [korvo-1, function-coreboard-1]
+        board: [korvo-1, function-coreboard-1, function-coreboard-1-spi-sd]
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +59,7 @@ jobs:
             korvo-1)
               echo "defaults=sdkconfig.defaults;sdkconfig.defaults.korvo-1" >> "$GITHUB_OUTPUT"
               ;;
-            function-coreboard-1)
+            function-coreboard-1|function-coreboard-1-spi-sd)
               echo "defaults=sdkconfig.defaults;sdkconfig.defaults.function-coreboard-1" >> "$GITHUB_OUTPUT"
               ;;
             *)
@@ -139,7 +139,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [korvo-1, function-coreboard-1]
+        board: [korvo-1, function-coreboard-1, function-coreboard-1-spi-sd]
     steps:
       - uses: actions/checkout@v4
         with:
