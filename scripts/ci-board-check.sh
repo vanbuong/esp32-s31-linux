@@ -94,7 +94,7 @@ else
 	echo "ok      Korvo leaves Ethernet disabled"
 fi
 
-# SDIO profile keeps DW MMC; SPI-SD profile uses mmc_spi + spi-gpio.
+# SDIO profile keeps DW MMC; SPI-SD profile uses mmc_spi + GPSPI3.
 if ! grep -q '^CONFIG_MMC_DW=y$' \
 	br2-external/board/esp32s31-fcb1/linux.config; then
 	echo "FAIL: FCB1 linux.config missing CONFIG_MMC_DW=y"
@@ -109,12 +109,19 @@ if ! grep -q '^CONFIG_MMC_SPI=y$' \
 else
 	echo "ok      FCB1-SPI-SD enables MMC_SPI"
 fi
-if ! grep -q '^CONFIG_SPI_GPIO=y$' \
+if ! grep -q '^CONFIG_SPI_ESP32S31=y$' \
 	br2-external/board/esp32s31-fcb1-spi-sd/linux.config; then
-	echo "FAIL: FCB1-SPI-SD linux.config missing CONFIG_SPI_GPIO=y"
+	echo "FAIL: FCB1-SPI-SD linux.config missing CONFIG_SPI_ESP32S31=y"
 	fail=1
 else
-	echo "ok      FCB1-SPI-SD enables SPI_GPIO"
+	echo "ok      FCB1-SPI-SD enables SPI_ESP32S31"
+fi
+if grep -q '^CONFIG_SPI_GPIO=y$' \
+	br2-external/board/esp32s31-fcb1-spi-sd/linux.config; then
+	echo "FAIL: FCB1-SPI-SD linux.config still enables CONFIG_SPI_GPIO"
+	fail=1
+else
+	echo "ok      FCB1-SPI-SD leaves SPI_GPIO off"
 fi
 if ! grep -q 'compatible = "mmc-spi-slot"' \
 	linux/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts; then
@@ -122,6 +129,33 @@ if ! grep -q 'compatible = "mmc-spi-slot"' \
 	fail=1
 else
 	echo "ok      SPI-SD DTS has mmc-spi-slot"
+fi
+if ! grep -q 'compatible = "esp,esp32s31-spi"' \
+	linux/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts \
+	linux/arch/riscv/boot/dts/espressif/esp32s31.dtsi; then
+	echo "FAIL: DTS missing esp,esp32s31-spi GPSPI host"
+	fail=1
+else
+	echo "ok      DTS has esp,esp32s31-spi"
+fi
+if ! grep -q 'spi-max-frequency = <40000000>' \
+	linux/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts; then
+	echo "FAIL: SPI-SD DTS not requesting 40 MHz GPSPI clock"
+	fail=1
+else
+	echo "ok      SPI-SD DTS requests 40 MHz"
+fi
+if ! test -f linux/drivers/spi/spi-esp32s31.c; then
+	echo "FAIL: missing linux/drivers/spi/spi-esp32s31.c"
+	fail=1
+else
+	echo "ok      GPSPI host driver present"
+fi
+if ! test -f linux/patches/0012-spi-esp32s31-gpspi-host.patch; then
+	echo "FAIL: missing 0012-spi-esp32s31-gpspi-host.patch"
+	fail=1
+else
+	echo "ok      GPSPI Kconfig patch present"
 fi
 
 # The generated source patch must match linux/ + shared IPC headers.
