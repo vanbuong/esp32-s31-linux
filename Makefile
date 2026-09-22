@@ -24,8 +24,25 @@ OPENSBI_PATCHES := $(sort $(wildcard opensbi/patches/*.patch))
 # Every file, not the directories: editing a source in place leaves the
 # directory mtime alone, and the patch would not be regenerated.
 LINUX_SOURCES := $(shell find linux -type f -not -path 'linux/patches/*') \
-	shared/esp32s31-wifi-ipc.h
+	shared/esp32s31-wifi-ipc.h shared/esp32s31-eth-ipc.h
 LINUX_GENERATED_PATCH := linux/patches/0000-esp32s31-add-source-files.patch
+
+# Board selection.  korvo-1 is the historical default; function-coreboard-1
+# enables on-board RGMII Gigabit Ethernet, an external SDIO microSD on the
+# dedicated SDMMC pads, and an SPI ILI9341 panel on the J2 header pins
+# documented in bootloader/main/board.h.
+BOARD ?= korvo-1
+ifeq ($(BOARD),function-coreboard-1)
+BR_DEFCONFIG := esp32s31_fcb1_defconfig
+BR_BOARD_DIR := br2-external/board/esp32s31-fcb1
+BOOTLOADER_SDKCONFIG_DEFAULTS := sdkconfig.defaults;sdkconfig.defaults.function-coreboard-1
+else ifeq ($(BOARD),korvo-1)
+BR_DEFCONFIG := esp32s31_defconfig
+BR_BOARD_DIR := br2-external/board/esp32s31
+BOOTLOADER_SDKCONFIG_DEFAULTS := sdkconfig.defaults;sdkconfig.defaults.korvo-1
+else
+$(error Unknown BOARD=$(BOARD); use korvo-1 or function-coreboard-1)
+endif
 
 # Buildroot cannot build on macOS, so it runs in a container.  Its output/ and
 # dl/ stay in a volume; several gigabytes have no business on virtiofs.
@@ -33,10 +50,9 @@ BR_DIR := external/buildroot
 BR_IMAGE ?= esp32s31-buildroot:bookworm
 BR_VOLUME ?= esp32s31-br
 BR_VOLUME_SIZE ?= 60G
-BR_DEFCONFIG := esp32s31_defconfig
 # The release Buildroot builds, which is also what the series is checked on.
 LINUX_VERSION := $(shell sed -n 's/^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="\(.*\)"/\1/p' \
-	br2-external/configs/esp32s31_defconfig)
+	br2-external/configs/$(BR_DEFCONFIG))
 BR_MEMORY ?= 8G
 BR_OUT := $(BUILD_DIR)/buildroot
 BR_MAKE := make O=/br/output BR2_EXTERNAL=/work/br2-external BR2_DL_DIR=/br/dl
@@ -48,7 +64,7 @@ BR_RUN = "$(CONTAINER)" run --rm --cpus $(JOBS) --memory $(BR_MEMORY) \
 BR_TOOLS = "$(CONTAINER)" run --rm --uid $(shell id -u) --gid $(shell id -g) \
 	-v "$(CURDIR)":/work "$(BR_IMAGE)"
 
-INITRAMFS_INIT := br2-external/board/esp32s31/init
+INITRAMFS_INIT := $(BR_BOARD_DIR)/init
 SD_DISK ?=
 SD_RAW = $(subst /dev/disk,/dev/rdisk,$(SD_DISK))
 # FAT area; the rest of the card becomes the root partition.  Shrink this
@@ -82,6 +98,8 @@ INITRAMFS_OFFSET := 0xa20000
 help:
 	@printf '%s\n' \
 		'ESP32-S31 Linux (macOS host)' \
+		'' \
+		'  BOARD=$(BOARD)   (korvo-1 | function-coreboard-1)' \
 		'' \
 		'  make check                         verify host tools and submodules' \
 		'  make ports                         list connected serial devices' \
@@ -157,12 +175,14 @@ bootloader:
 	fi
 	@mkdir -p "$(BUILD_DIR)"
 	@export IDF_PYTHON_ENV_PATH="$(IDF_PYTHON_ENV)"; \
+	export BOARD="$(BOARD)"; \
 	if ! source "$(IDF_PATH)/export.sh" >"$(BUILD_DIR)/idf-export.log" 2>&1; then \
 		cat "$(BUILD_DIR)/idf-export.log"; \
 		echo 'ESP-IDF environment setup failed (run $(IDF_PATH)/install.sh)'; \
 		exit 1; \
 	fi; \
-	cd bootloader && idf.py -B ../$(BUILD_DIR)/bootloader build
+	cd bootloader && idf.py -B ../$(BUILD_DIR)/bootloader \
+		-D SDKCONFIG_DEFAULTS="$(BOOTLOADER_SDKCONFIG_DEFAULTS)" build
 
 opensbi:
 	@rm -rf "$(OPENSBI_SRC)"
@@ -227,7 +247,7 @@ kernel-menuconfig: br-volume
 
 kernel-saveconfig: br-volume
 	@$(BR_RUN) sh -c 'cd /work/$(BR_DIR) && $(BR_MAKE) linux-update-defconfig'
-	@git diff --stat -- br2-external/board/esp32s31/linux.config
+	@git diff --stat -- $(BR_BOARD_DIR)/linux.config
 
 container-image:
 	@test -n "$(CONTAINER)" || { echo 'missing the container CLI'; exit 1; }

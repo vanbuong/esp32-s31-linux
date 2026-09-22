@@ -178,6 +178,64 @@ new file mode 100644
 +        interrupt-controller;
 +        #interrupt-cells = <3>;
 +    };
+diff --git a/Documentation/devicetree/bindings/net/esp,esp32s31-eth.yaml b/Documentation/devicetree/bindings/net/esp,esp32s31-eth.yaml
+new file mode 100644
+--- /dev/null
++++ b/Documentation/devicetree/bindings/net/esp,esp32s31-eth.yaml
+@@ -0,0 +1,53 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/net/esp,esp32s31-eth.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Espressif ESP32-S31 Gigabit Ethernet IPC netdev
++
++maintainers:
++  - Marco Müller <hello@annoyedmilk.ch>
++
++description: >
++  The ESP32-S31 RGMII EMAC stays with ESP-IDF firmware on hart 0. Linux
++  exchanges Ethernet frames through a fixed shared-memory window in internal
++  SRAM and a pair of cross-core doorbell registers.
++
++properties:
++  compatible:
++    const: esp,esp32s31-eth
++
++  reg:
++    items:
++      - description: Shared-memory IPC block in internal SRAM
++      - description: Cross-core doorbell register pair (FROM_CPU_2/3)
++
++  reg-names:
++    items:
++      - const: ipc
++      - const: doorbell
++
++  interrupts:
++    maxItems: 1
++
++  interrupt-parent: true
++
++required:
++  - compatible
++  - reg
++  - reg-names
++  - interrupts
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/interrupt-controller/irq.h>
++    ethernet@2f060000 {
++        compatible = "esp,esp32s31-eth";
++        reg = <0x2f060000 0x18000>, <0x20586018 0x8>;
++        reg-names = "ipc", "doorbell";
++        interrupt-parent = <&clic>;
++        interrupts = <36 67 IRQ_TYPE_LEVEL_HIGH>;
++    };
 diff --git a/Documentation/devicetree/bindings/net/wireless/esp,esp32s31-wifi.yaml b/Documentation/devicetree/bindings/net/wireless/esp,esp32s31-wifi.yaml
 new file mode 100644
 --- /dev/null
@@ -356,14 +414,16 @@ diff --git a/arch/riscv/boot/dts/espressif/Makefile b/arch/riscv/boot/dts/espres
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/boot/dts/espressif/Makefile
-@@ -0,0 +1,2 @@
+@@ -0,0 +1,4 @@
 +# SPDX-License-Identifier: GPL-2.0
 +dtb-$(CONFIG_ARCH_ESPRESSIF) += esp32s31_generic.dtb
++dtb-$(CONFIG_ARCH_ESPRESSIF) += esp32s31_korvo1.dtb
++dtb-$(CONFIG_ARCH_ESPRESSIF) += esp32s31_function_coreboard_1.dtb
 diff --git a/arch/riscv/boot/dts/espressif/esp32s31.dtsi b/arch/riscv/boot/dts/espressif/esp32s31.dtsi
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/boot/dts/espressif/esp32s31.dtsi
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,211 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Espressif ESP32-S31 minimal Device Tree Source.
@@ -390,6 +450,11 @@ new file mode 100644
 +
 +		/* Scanned out by the loader's DMA across the handoff. */
 +		fb_region: framebuffer@50f40000 {
++			/*
++			 * Sized for the Korvo-1 800x480 panel.  The
++			 * Function-CoreBoard-1 ILI9341 only uses the first
++			 * 150 KiB; the rest stays reserved and unused.
++			 */
 +			reg = <0x50f40000 0xbc000>;
 +			no-map;
 +		};
@@ -570,22 +635,114 @@ new file mode 100644
 +
 +	};
 +};
+diff --git a/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1.dts b/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1.dts
+new file mode 100644
+--- /dev/null
++++ b/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1.dts
+@@ -0,0 +1,52 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * ESP32-S31 Function-CoreBoard-1 Device Tree Source
++ * Author: Marco Müller <hello@annoyedmilk.ch>
++ *
++ * On-board: RGMII Gigabit Ethernet (YT8531), USB host, Wi-Fi.
++ * Header J2: SDMMC slot-0 pads for an external SDIO microSD socket and
++ * free GPIOs for an SPI ILI9341 panel (see bootloader/main/board.h).
++ */
++/dts-v1/;
++#include "esp32s31.dtsi"
++
++/ {
++	model = "Espressif ESP32-S31 Function-CoreBoard-1";
++	compatible = "esp,esp32s31-function-coreboard-1", "esp,esp32s31";
++
++	chosen {
++		linux,initrd-start = <0x50800000>;
++		linux,initrd-end = <0x50A00000>;
++		stdout-path = "serial0:115200n8";
++
++		/*
++		 * The loader owns an SPI ILI9341 (320x240) and keeps flushing
++		 * this PSRAM buffer from hart 0.  Linux only maps it as
++		 * simple-framebuffer /dev/fb0.
++		 */
++		framebuffer: framebuffer@50f40000 {
++			compatible = "simple-framebuffer";
++			reg = <0x50f40000 (320 * 240 * 2)>;
++			width = <320>;
++			height = <240>;
++			stride = <(320 * 2)>;
++			format = "r5g6b5";
++			memory-region = <&fb_region>;
++		};
++	};
++
++	/*
++	 * Hart-0 ESP-IDF owns the RGMII EMAC + YT8531.  Linux sees eth0
++	 * through the shared-memory IPC window above the Wi-Fi block.
++	 * Interrupt: CLIC input 36 <- FROM_CPU_2 (source 67).
++	 */
++	ethernet: ethernet@2f060000 {
++		compatible = "esp,esp32s31-eth";
++		reg = <0x2f060000 0x18000>, <0x20586018 0x8>;
++		reg-names = "ipc", "doorbell";
++		interrupt-parent = <&clic>;
++		interrupts = <36 67 IRQ_TYPE_LEVEL_HIGH>;
++	};
++};
++
++&sdmmc0 { status = "okay"; };
 diff --git a/arch/riscv/boot/dts/espressif/esp32s31_generic.dts b/arch/riscv/boot/dts/espressif/esp32s31_generic.dts
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/boot/dts/espressif/esp32s31_generic.dts
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,30 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
-+ * ESP32-S31 Device Tree Source
++ * ESP32-S31 Device Tree Source (legacy name for Korvo-1)
 + * Author: Marco Müller <hello@annoyedmilk.ch>
 + */
 +/dts-v1/;
 +#include "esp32s31.dtsi"
 +
 +/ {
-+	model = "Espressif ESP32-S31 S-mode (generic)";
-+	compatible = "esp,esp32s31";
++	model = "Espressif ESP32-S31 Korvo-1";
++	compatible = "esp,esp32s31-korvo-1", "esp,esp32s31";
++
++	chosen {
++		linux,initrd-start = <0x50800000>;
++		linux,initrd-end = <0x50A00000>;
++		stdout-path = "serial0:115200n8";
++
++		framebuffer: framebuffer@50f40000 {
++			compatible = "simple-framebuffer";
++			reg = <0x50f40000 (800 * 480 * 2)>;
++			width = <800>;
++			height = <480>;
++			stride = <(800 * 2)>;
++			format = "r5g6b5";
++			memory-region = <&fb_region>;
++		};
++	};
++};
++
++&sdmmc0 { status = "okay"; };
+diff --git a/arch/riscv/boot/dts/espressif/esp32s31_korvo1.dts b/arch/riscv/boot/dts/espressif/esp32s31_korvo1.dts
+new file mode 100644
+--- /dev/null
++++ b/arch/riscv/boot/dts/espressif/esp32s31_korvo1.dts
+@@ -0,0 +1,39 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * ESP32-S31 Korvo-1 Device Tree Source
++ * Author: Marco Müller <hello@annoyedmilk.ch>
++ */
++/dts-v1/;
++#include "esp32s31.dtsi"
++
++/ {
++	model = "Espressif ESP32-S31 Korvo-1";
++	compatible = "esp,esp32s31-korvo-1", "esp,esp32s31";
 +
 +	chosen {
 +		linux,initrd-start = <0x50800000>;
@@ -2144,6 +2301,401 @@ new file mode 100644
 +}
 +
 +IRQCHIP_DECLARE(esp32s31_clic, "esp,esp32s31-clic", esp32s31_clic_probe);
+diff --git a/drivers/net/ethernet/espressif/Kconfig b/drivers/net/ethernet/espressif/Kconfig
+new file mode 100644
+--- /dev/null
++++ b/drivers/net/ethernet/espressif/Kconfig
+@@ -0,0 +1,22 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config NET_VENDOR_ESPRESSIF
++	bool "Espressif devices"
++	default y
++	help
++	  If you have a network device belonging to this class, say Y.
++
++if NET_VENDOR_ESPRESSIF
++
++config ESP32S31_ETH
++	tristate "ESP32-S31 Gigabit Ethernet (hart-0 EMAC IPC)"
++	depends on SOC_ESP32S31 || COMPILE_TEST
++	depends on OF
++	help
++	  Network device for the ESP32-S31 internal RGMII EMAC, which is driven
++	  by ESP-IDF firmware resident on hart 0. Linux exchanges Ethernet
++	  frames with that firmware through shared internal SRAM.
++
++	  To compile this driver as a module, choose M here: the module will
++	  be called esp32s31-eth.
++
++endif # NET_VENDOR_ESPRESSIF
+diff --git a/drivers/net/ethernet/espressif/Makefile b/drivers/net/ethernet/espressif/Makefile
+new file mode 100644
+--- /dev/null
++++ b/drivers/net/ethernet/espressif/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_ESP32S31_ETH) += esp32s31-eth.o
+diff --git a/drivers/net/ethernet/espressif/esp32s31-eth-ipc.h b/drivers/net/ethernet/espressif/esp32s31-eth-ipc.h
+new file mode 100644
+--- /dev/null
++++ b/drivers/net/ethernet/espressif/esp32s31-eth-ipc.h
+@@ -0,0 +1,57 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++/*
++ * Shared-memory ABI between Linux on hart 1 and the ESP-IDF Ethernet
++ * firmware on hart 0 for the ESP32-S31 Function-CoreBoard-1 gigabit MAC.
++ * Same rules as the Wi-Fi IPC: uncached SRAM, fixed slots, one producer and
++ * one consumer per ring.
++ */
++#ifndef _ESP32S31_ETH_IPC_H
++#define _ESP32S31_ETH_IPC_H
++
++#ifdef __KERNEL__
++#include <linux/types.h>
++#else
++#include <stdint.h>
++typedef uint32_t u32;
++typedef uint8_t u8;
++#endif
++
++#define ESP32S31_ETH_IPC_MAGIC		0x45313353	/* "S31E" */
++#define ESP32S31_ETH_IPC_VERSION	1
++
++/*
++ * Sits above the Wi-Fi IPC window and below the LCD DMA descriptor ring.
++ * The ethernet@ node in the board DTS carries the same address.
++ */
++#define ESP32S31_ETH_IPC_SRAM_ADDR	0x2f060000
++#define ESP32S31_ETH_IPC_SRAM_SIZE	0x00018000
++
++#define ESP32S31_ETH_IPC_LINE		64
++#define ESP32S31_ETH_IPC_SLOT_DATA	1536
++#define ESP32S31_ETH_IPC_SLOTS		16
++
++struct esp32s31_eth_ipc_slot {
++	u32 len;
++	u8 reserved[ESP32S31_ETH_IPC_LINE - 4];
++	u8 data[ESP32S31_ETH_IPC_SLOT_DATA];
++};
++
++struct esp32s31_eth_ipc_ring {
++	u32 head;
++	u8 reserved_head[ESP32S31_ETH_IPC_LINE - 4];
++	u32 tail;
++	u8 reserved_tail[ESP32S31_ETH_IPC_LINE - 4];
++	struct esp32s31_eth_ipc_slot slot[ESP32S31_ETH_IPC_SLOTS];
++};
++
++struct esp32s31_eth_ipc {
++	u32 magic;
++	u32 version;
++	u32 link_up;
++	u8 mac[6];
++	u8 reserved[ESP32S31_ETH_IPC_LINE - 18];
++	struct esp32s31_eth_ipc_ring to_linux;
++	struct esp32s31_eth_ipc_ring to_firmware;
++};
++
++#endif /* _ESP32S31_ETH_IPC_H */
+diff --git a/drivers/net/ethernet/espressif/esp32s31-eth.c b/drivers/net/ethernet/espressif/esp32s31-eth.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/net/ethernet/espressif/esp32s31-eth.c
+@@ -0,0 +1,294 @@
++# SPDX-License-Identifier: GPL-2.0-only
++/*
++ * ESP32-S31 Gigabit Ethernet IPC netdev
++ *
++ * The RGMII MAC and YT8531 PHY stay with ESP-IDF on hart 0.  Linux exchanges
++ * Ethernet frames through shared internal SRAM, mirroring the WLAN modem
++ * driver.
++ */
++
++#include <linux/delay.h>
++#include <linux/etherdevice.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/netdevice.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/skbuff.h>
++
++#include "esp32s31-eth-ipc.h"
++
++#define ESP32S31_ETH_NAPI_WEIGHT		16
++#define ESP32S31_ETH_DOORBELL_RX		0x0
++#define ESP32S31_ETH_DOORBELL_TX		0x4
++
++struct esp32s31_eth {
++	struct net_device *ndev;
++	struct napi_struct napi;
++	struct esp32s31_eth_ipc __iomem *ipc;
++	void __iomem *doorbell;
++};
++
++static struct esp32s31_eth *esp32s31_eth_priv(struct net_device *ndev)
++{
++	return *(struct esp32s31_eth **)netdev_priv(ndev);
++}
++
++static struct esp32s31_eth_ipc_slot __iomem *
++esp32s31_eth_slot(struct esp32s31_eth_ipc_ring __iomem *ring, u32 index)
++{
++	return &ring->slot[index % ESP32S31_ETH_IPC_SLOTS];
++}
++
++static bool esp32s31_eth_tx_full(struct esp32s31_eth_ipc_ring __iomem *ring)
++{
++	u32 head = ioread32(&ring->head);
++	u32 tail = ioread32(&ring->tail);
++
++	return head - tail >= ESP32S31_ETH_IPC_SLOTS;
++}
++
++static void esp32s31_eth_sync_carrier(struct esp32s31_eth *priv)
++{
++	if (ioread32(&priv->ipc->link_up))
++		netif_carrier_on(priv->ndev);
++	else
++		netif_carrier_off(priv->ndev);
++}
++
++static int esp32s31_eth_poll(struct napi_struct *napi, int budget)
++{
++	struct esp32s31_eth *priv = container_of(napi, struct esp32s31_eth, napi);
++	struct esp32s31_eth_ipc_ring __iomem *ring = &priv->ipc->to_linux;
++	int done = 0;
++
++	while (done < budget) {
++		struct esp32s31_eth_ipc_slot __iomem *slot;
++		struct sk_buff *skb;
++		u32 tail = ioread32(&ring->tail);
++		u32 head = ioread32(&ring->head);
++		u32 len;
++
++		if (tail == head)
++			break;
++
++		slot = esp32s31_eth_slot(ring, tail);
++		len = ioread32(&slot->len);
++		if (len == 0 || len > ESP32S31_ETH_IPC_SLOT_DATA) {
++			iowrite32(tail + 1, &ring->tail);
++			priv->ndev->stats.rx_errors++;
++			continue;
++		}
++
++		skb = napi_alloc_skb(napi, len);
++		if (!skb) {
++			priv->ndev->stats.rx_dropped++;
++			break;
++		}
++
++		memcpy_fromio(skb_put(skb, len), slot->data, len);
++		iowrite32(tail + 1, &ring->tail);
++		skb->protocol = eth_type_trans(skb, priv->ndev);
++		napi_gro_receive(napi, skb);
++		priv->ndev->stats.rx_packets++;
++		priv->ndev->stats.rx_bytes += len;
++		done++;
++	}
++
++	esp32s31_eth_sync_carrier(priv);
++
++	if (netif_queue_stopped(priv->ndev) &&
++	    !esp32s31_eth_tx_full(&priv->ipc->to_firmware))
++		netif_wake_queue(priv->ndev);
++
++	if (done < budget)
++		napi_complete_done(napi, done);
++
++	return done;
++}
++
++static irqreturn_t esp32s31_eth_irq(int irq, void *dev_id)
++{
++	struct esp32s31_eth *priv = dev_id;
++
++	iowrite32(0, priv->doorbell + ESP32S31_ETH_DOORBELL_RX);
++	napi_schedule(&priv->napi);
++	return IRQ_HANDLED;
++}
++
++static netdev_tx_t esp32s31_eth_xmit(struct sk_buff *skb,
++				     struct net_device *ndev)
++{
++	struct esp32s31_eth *priv = esp32s31_eth_priv(ndev);
++	struct esp32s31_eth_ipc_ring __iomem *ring = &priv->ipc->to_firmware;
++	struct esp32s31_eth_ipc_slot __iomem *slot;
++	u32 head = ioread32(&ring->head);
++	unsigned int len = skb->len;
++
++	if (len > ESP32S31_ETH_IPC_SLOT_DATA) {
++		ndev->stats.tx_dropped++;
++		dev_kfree_skb_any(skb);
++		return NETDEV_TX_OK;
++	}
++
++	if (esp32s31_eth_tx_full(ring)) {
++		netif_stop_queue(ndev);
++		return NETDEV_TX_BUSY;
++	}
++
++	slot = esp32s31_eth_slot(ring, head);
++	memcpy_toio(slot->data, skb->data, len);
++	iowrite32(len, &slot->len);
++	iowrite32(head + 1, &ring->head);
++	iowrite32(1, priv->doorbell + ESP32S31_ETH_DOORBELL_TX);
++
++	ndev->stats.tx_packets++;
++	ndev->stats.tx_bytes += len;
++	dev_kfree_skb_any(skb);
++
++	if (esp32s31_eth_tx_full(ring)) {
++		netif_stop_queue(ndev);
++		if (!esp32s31_eth_tx_full(ring))
++			netif_wake_queue(ndev);
++	}
++
++	return NETDEV_TX_OK;
++}
++
++static int esp32s31_eth_open(struct net_device *ndev)
++{
++	struct esp32s31_eth *priv = esp32s31_eth_priv(ndev);
++
++	napi_enable(&priv->napi);
++	esp32s31_eth_sync_carrier(priv);
++	netif_start_queue(ndev);
++	return 0;
++}
++
++static int esp32s31_eth_stop(struct net_device *ndev)
++{
++	struct esp32s31_eth *priv = esp32s31_eth_priv(ndev);
++
++	netif_stop_queue(ndev);
++	netif_carrier_off(ndev);
++	napi_disable(&priv->napi);
++	return 0;
++}
++
++static const struct net_device_ops esp32s31_eth_netdev_ops = {
++	.ndo_open = esp32s31_eth_open,
++	.ndo_stop = esp32s31_eth_stop,
++	.ndo_start_xmit = esp32s31_eth_xmit,
++	.ndo_set_mac_address = eth_mac_addr,
++	.ndo_validate_addr = eth_validate_addr,
++};
++
++static int esp32s31_eth_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct esp32s31_eth *priv;
++	struct net_device *ndev;
++	u8 mac[ETH_ALEN];
++	u32 magic;
++	int irq, ret, i;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->ipc = devm_platform_ioremap_resource_byname(pdev, "ipc");
++	if (IS_ERR(priv->ipc))
++		return PTR_ERR(priv->ipc);
++
++	priv->doorbell = devm_platform_ioremap_resource_byname(pdev, "doorbell");
++	if (IS_ERR(priv->doorbell))
++		return PTR_ERR(priv->doorbell);
++
++	for (i = 0; i < 50; i++) {
++		magic = ioread32(&priv->ipc->magic);
++		if (magic == ESP32S31_ETH_IPC_MAGIC)
++			break;
++		msleep(20);
++	}
++	if (magic != ESP32S31_ETH_IPC_MAGIC) {
++		dev_err(dev, "ethernet IPC not ready (magic 0x%08x)\n", magic);
++		return -ENODEV;
++	}
++	if (ioread32(&priv->ipc->version) != ESP32S31_ETH_IPC_VERSION) {
++		dev_err(dev, "unsupported ethernet IPC version %u\n",
++			ioread32(&priv->ipc->version));
++		return -EINVAL;
++	}
++
++	ndev = alloc_etherdev(sizeof(struct esp32s31_eth *));
++	if (!ndev)
++		return -ENOMEM;
++
++	*(struct esp32s31_eth **)netdev_priv(ndev) = priv;
++	priv->ndev = ndev;
++	SET_NETDEV_DEV(ndev, dev);
++	ndev->netdev_ops = &esp32s31_eth_netdev_ops;
++	ndev->min_mtu = ETH_MIN_MTU;
++	ndev->max_mtu = ESP32S31_ETH_IPC_SLOT_DATA - ETH_HLEN;
++
++	for (i = 0; i < ETH_ALEN; i++)
++		mac[i] = ioread8(&priv->ipc->mac[i]);
++	eth_hw_addr_set(ndev, mac);
++
++	netif_napi_add(ndev, &priv->napi, esp32s31_eth_poll);
++	platform_set_drvdata(pdev, priv);
++
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0) {
++		ret = irq;
++		goto err_free;
++	}
++
++	ret = devm_request_irq(dev, irq, esp32s31_eth_irq, 0,
++			       dev_name(dev), priv);
++	if (ret)
++		goto err_free;
++
++	ret = register_netdev(ndev);
++	if (ret)
++		goto err_free;
++
++	esp32s31_eth_sync_carrier(priv);
++	dev_info(dev, "eth0 via hart-0 EMAC IPC at 0x%08x\n",
++		 ESP32S31_ETH_IPC_SRAM_ADDR);
++	return 0;
++
++err_free:
++	netif_napi_del(&priv->napi);
++	free_netdev(ndev);
++	return ret;
++}
++
++static void esp32s31_eth_remove(struct platform_device *pdev)
++{
++	struct esp32s31_eth *priv = platform_get_drvdata(pdev);
++
++	unregister_netdev(priv->ndev);
++	netif_napi_del(&priv->napi);
++	free_netdev(priv->ndev);
++}
++
++static const struct of_device_id esp32s31_eth_of_match[] = {
++	{ .compatible = "esp,esp32s31-eth" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, esp32s31_eth_of_match);
++
++static struct platform_driver esp32s31_eth_driver = {
++	.probe = esp32s31_eth_probe,
++	.remove = esp32s31_eth_remove,
++	.driver = {
++		.name = "esp32s31-eth",
++		.of_match_table = esp32s31_eth_of_match,
++	},
++};
++module_platform_driver(esp32s31_eth_driver);
++
++MODULE_DESCRIPTION("ESP32-S31 Gigabit Ethernet IPC netdev");
++MODULE_LICENSE("GPL");
 diff --git a/drivers/net/wireless/espressif/Kconfig b/drivers/net/wireless/espressif/Kconfig
 new file mode 100644
 --- /dev/null

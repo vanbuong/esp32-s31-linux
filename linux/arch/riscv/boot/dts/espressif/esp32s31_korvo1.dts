@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * ESP32-S31 Device Tree Source (legacy name for Korvo-1)
+ * ESP32-S31 Korvo-1 Device Tree Source
  * Author: Marco Müller <hello@annoyedmilk.ch>
  */
 /dts-v1/;
@@ -15,6 +15,15 @@
 		linux,initrd-end = <0x50A00000>;
 		stdout-path = "serial0:115200n8";
 
+		/*
+		 * The loader brings up the Korvo-1's 800x480 RGB panel and
+		 * leaves the LCD_CAM DMA scanning out an RGB565 buffer at the
+		 * top of PSRAM, so Linux only has to describe it; the memory
+		 * itself is reserved as fb_region.  of_platform creates this
+		 * device explicitly for a simple-framebuffer under /chosen.
+		 * A build whose loader leaves GPIO33/34 to USB Serial/JTAG
+		 * skips display init, and then fb0 exists but drives nothing.
+		 */
 		framebuffer: framebuffer@50f40000 {
 			compatible = "simple-framebuffer";
 			reg = <0x50f40000 (800 * 480 * 2)>;

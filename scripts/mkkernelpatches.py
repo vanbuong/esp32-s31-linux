@@ -18,10 +18,13 @@ OUTPUT = OVERLAY / "patches" / "0000-esp32s31-add-source-files.patch"
 # The kernel configuration lives in br2-external/ instead.
 EXCLUDED = {"patches", "arch/riscv/configs"}
 
-# Both worlds compile the Wi-Fi ABI header; the loader's copy is the authority.
+# Both worlds compile the IPC ABI headers; the loader's copies are the
+# authority.
 EXTRA = {
     REPO / "shared" / "esp32s31-wifi-ipc.h":
         "drivers/net/wireless/espressif/esp32s31-wifi-ipc.h",
+    REPO / "shared" / "esp32s31-eth-ipc.h":
+        "drivers/net/ethernet/espressif/esp32s31-eth-ipc.h",
 }
 
 HEADER = """\

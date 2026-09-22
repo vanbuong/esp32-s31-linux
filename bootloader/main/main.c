@@ -28,6 +28,7 @@
 #include "soc/hp_mem_apm_reg.h"
 #include "soc/reg_base.h"
 #include "soc/spi_mem_c_reg.h"
+#include "board.h"
 #include "display.h"
 #include "loader.h"
 
@@ -403,6 +404,7 @@ void app_main(void)
         ESP_LOGE(TAG, "PSRAM not initialized");
         esp_restart();
     }
+    ESP_LOGI(TAG, "board: %s", BOARD_NAME);
     log_cache_mode();
     init_sd_card();
 
@@ -411,10 +413,10 @@ void app_main(void)
         esp_restart();
     }
 
-#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED
-    /* GPIO33/34 are native USB Serial/JTAG D-/D+ and LCD RGB data pins. */
+#if BOARD_HAS_RGB_LCD && CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED
+    /* Korvo-1: GPIO33/34 are native USB Serial/JTAG D-/D+ and LCD RGB data. */
     ESP_LOGI(TAG, "display disabled: GPIO33/34 reserved for USB Serial/JTAG");
-#else
+#elif BOARD_HAS_RGB_LCD || BOARD_HAS_SPI_ILI9341
     if (!display_init()) {
         ESP_LOGW(TAG, "continuing without display");
     }
@@ -426,6 +428,7 @@ void app_main(void)
              (uint32_t)INITRAMFS_LOAD_ADDR);
 
     start_wifi();
+    start_eth();
 
     disable_linux_hart_stack_protector();
     flush_l1_cache_before_handoff();

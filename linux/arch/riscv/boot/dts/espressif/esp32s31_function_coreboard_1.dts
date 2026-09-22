@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * ESP32-S31 Function-CoreBoard-1 Device Tree Source
+ * Author: Marco Müller <hello@annoyedmilk.ch>
+ *
+ * On-board: RGMII Gigabit Ethernet (YT8531), USB host, Wi-Fi.
+ * Header J2: SDMMC slot-0 pads for an external SDIO microSD socket and
+ * free GPIOs for an SPI ILI9341 panel (see bootloader/main/board.h).
+ */
+/dts-v1/;
+#include "esp32s31.dtsi"
+
+/ {
+	model = "Espressif ESP32-S31 Function-CoreBoard-1";
+	compatible = "esp,esp32s31-function-coreboard-1", "esp,esp32s31";
+
+	chosen {
+		linux,initrd-start = <0x50800000>;
+		linux,initrd-end = <0x50A00000>;
+		stdout-path = "serial0:115200n8";
+
+		/*
+		 * The loader owns an SPI ILI9341 (320x240) and keeps flushing
+		 * this PSRAM buffer from hart 0.  Linux only maps it as
+		 * simple-framebuffer /dev/fb0.
+		 */
+		framebuffer: framebuffer@50f40000 {
+			compatible = "simple-framebuffer";
+			reg = <0x50f40000 (320 * 240 * 2)>;
+			width = <320>;
+			height = <240>;
+			stride = <(320 * 2)>;
+			format = "r5g6b5";
+			memory-region = <&fb_region>;
+		};
+	};
+
+	/*
+	 * Hart-0 ESP-IDF owns the RGMII EMAC + YT8531.  Linux sees eth0
+	 * through the shared-memory IPC window above the Wi-Fi block.
+	 * Interrupt: CLIC input 36 <- FROM_CPU_2 (source 67).
+	 */
+	ethernet: ethernet@2f060000 {
+		compatible = "esp,esp32s31-eth";
+		reg = <0x2f060000 0x18000>, <0x20586018 0x8>;
+		reg-names = "ipc", "doorbell";
+		interrupt-parent = <&clic>;
+		interrupts = <36 67 IRQ_TYPE_LEVEL_HIGH>;
+	};
+};
+
+&sdmmc0 { status = "okay"; };

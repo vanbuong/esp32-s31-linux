@@ -1,6 +1,165 @@
 // SPDX-License-Identifier: BSD-2-Clause
 // Author: Marco Müller <hello@annoyedmilk.ch>
 
+#include "board.h"
+
+#if BOARD_HAS_SPI_ILI9341
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <string.h>
+#include "esp_log.h"
+#include "esp_err.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_ili9341.h"
+#include "driver/gpio.h"
+#include "driver/spi_master.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "display.h"
+
+#define LCD_FB_ADDR		BOARD_FB_ADDR
+#define LCD_H_RES		BOARD_LCD_H_RES
+#define LCD_V_RES		BOARD_LCD_V_RES
+#define LCD_FB_SIZE		(LCD_H_RES * LCD_V_RES * 2U)
+#define LCD_REFRESH_MS		100
+
+static const char *TAG = "s31-linux-ili9341";
+static esp_lcd_panel_handle_t panel;
+
+static void fill_color_bars(void)
+{
+    static const uint16_t colors[8] = {
+        0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F, 0x0000,
+    };
+    volatile uint16_t *fb = (volatile uint16_t *)LCD_FB_ADDR;
+
+    for (uint32_t y = 0; y < LCD_V_RES; y++) {
+        for (uint32_t x = 0; x < LCD_H_RES; x++) {
+            fb[y * LCD_H_RES + x] = colors[x * 8U / LCD_H_RES];
+        }
+    }
+}
+
+/*
+ * After the handoff the GMAC and Wi-Fi stacks own most of hart 0.  A low
+ * priority task keeps scanning the PSRAM frame buffer out over SPI so the
+ * Linux simple-framebuffer continues to light the panel without a native
+ * SPI display driver.
+ */
+static void lcd_refresh_task(void *arg)
+{
+    (void)arg;
+
+    for (;;) {
+        if (panel) {
+            esp_lcd_panel_draw_bitmap(panel, 0, 0, LCD_H_RES, LCD_V_RES,
+                                      (const void *)LCD_FB_ADDR);
+        }
+        vTaskDelay(pdMS_TO_TICKS(LCD_REFRESH_MS));
+    }
+}
+
+bool display_init(void)
+{
+    spi_bus_config_t buscfg = {
+        .sclk_io_num = BOARD_LCD_PIN_SCLK,
+        .mosi_io_num = BOARD_LCD_PIN_MOSI,
+        .miso_io_num = BOARD_LCD_PIN_MISO,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = LCD_FB_SIZE + 8,
+    };
+    esp_lcd_panel_io_handle_t io = NULL;
+    esp_lcd_panel_io_spi_config_t io_config = {
+        .cs_gpio_num = BOARD_LCD_PIN_CS,
+        .dc_gpio_num = BOARD_LCD_PIN_DC,
+        .spi_mode = 0,
+        .pclk_hz = BOARD_LCD_SPI_CLOCK_HZ,
+        .trans_queue_depth = 10,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+    };
+    esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = BOARD_LCD_PIN_RST,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel = 16,
+    };
+    esp_err_t err;
+
+    if (panel) {
+        return true;
+    }
+
+    if (BOARD_LCD_PIN_BL >= 0) {
+        gpio_config_t bl = {
+            .mode = GPIO_MODE_OUTPUT,
+            .pin_bit_mask = 1ULL << BOARD_LCD_PIN_BL,
+        };
+
+        gpio_config(&bl);
+        gpio_set_level(BOARD_LCD_PIN_BL, 1);
+    }
+
+    fill_color_bars();
+
+    err = spi_bus_initialize(BOARD_LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)BOARD_LCD_SPI_HOST,
+                                   &io_config, &io);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "panel io failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    err = esp_lcd_new_panel_ili9341(io, &panel_config, &panel);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ili9341 panel failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    err = esp_lcd_panel_reset(panel);
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_init(panel);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_mirror(panel, false, false);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_disp_on_off(panel, true);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "panel bring-up failed: %s", esp_err_to_name(err));
+        esp_lcd_panel_del(panel);
+        panel = NULL;
+        return false;
+    }
+
+    esp_lcd_panel_draw_bitmap(panel, 0, 0, LCD_H_RES, LCD_V_RES,
+                              (const void *)LCD_FB_ADDR);
+
+    if (xTaskCreate(lcd_refresh_task, "ili9341_fb", 4096, NULL, 1,
+                    NULL) != pdPASS) {
+        ESP_LOGW(TAG, "refresh task missing; panel shows the boot bars only");
+    }
+
+    ESP_LOGI(TAG, "ILI9341 framebuffer live: %ux%u RGB565 fb=0x%08" PRIx32
+                  " SPI SCLK=%d MOSI=%d CS=%d DC=%d RST=%d BL=%d",
+             (unsigned)LCD_H_RES, (unsigned)LCD_V_RES,
+             (uint32_t)LCD_FB_ADDR,
+             BOARD_LCD_PIN_SCLK, BOARD_LCD_PIN_MOSI, BOARD_LCD_PIN_CS,
+             BOARD_LCD_PIN_DC, BOARD_LCD_PIN_RST, BOARD_LCD_PIN_BL);
+    return true;
+}
+
+#else /* RGB Korvo path lives in display_rgb.c via the shared display_init. */
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -21,22 +180,12 @@
 #include "soc/lcd_cam_struct.h"
 #include "display.h"
 
-/*
- * Frame buffer placement: RGB565 at 800x480 needs 768 KiB, carved out of the
- * top of the 16 MiB PSRAM aperture so it stays clear of the kernel image at
- * 0x50000000 and the initramfs at 0x50800000.
- */
-#define LCD_FB_ADDR            0x50F40000U
-#define LCD_H_RES              800U
-#define LCD_V_RES              480U
+#define LCD_FB_ADDR            BOARD_FB_ADDR
+#define LCD_H_RES              BOARD_LCD_H_RES
+#define LCD_V_RES              BOARD_LCD_V_RES
 #define LCD_FB_SIZE            (LCD_H_RES * LCD_V_RES * 2U)
 #define LCD_PCLK_HZ            18000000U
 
-/*
- * The AXI DMA descriptor ring lives in upper SRAM, above the 256 KiB that the
- * loader relocates OpenSBI into at 0x2F000000.  The DMA engine keeps walking
- * this ring after the handoff, so it must not be clobbered by that copy.
- */
 #define LCD_DMA_LINK_ADDR      0x2F079000U
 #define LCD_DMA_LINK_SIZE      0x1000U
 #define LCD_DMA_CHUNK_SIZE     DMA_DESCRIPTOR_BUFFER_MAX_SIZE_64B_ALIGNED
@@ -66,13 +215,6 @@ static void fill_color_bars(void)
     }
 }
 
-/*
- * Build a self-refreshing descriptor ring covering the whole frame buffer.
- * The transfer is split into DMA_DESCRIPTOR_BUFFER_MAX_SIZE_64B_ALIGNED
- * chunks because one descriptor cannot span the full 768 KiB.  The last
- * descriptor links back to the first, so the DMA engine walks the frame
- * buffer forever without any CPU involvement after the handoff.
- */
 static void build_dma_link(void)
 {
     dma_descriptor_align8_t *link = (dma_descriptor_align8_t *)LCD_DMA_LINK_ADDR;
@@ -85,7 +227,6 @@ static void build_dma_link(void)
         if (chunk > LCD_DMA_CHUNK_SIZE) {
             chunk = LCD_DMA_CHUNK_SIZE;
         }
-        /* Hand ownership to the DMA engine and flag end-of-frame on the last node. */
         link[i].dw0.size = chunk;
         link[i].dw0.length = chunk;
         link[i].dw0.suc_eof = (i == LCD_DMA_NODE_COUNT - 1U);
@@ -193,11 +334,6 @@ bool display_init(void)
         goto fail;
     }
 
-    /*
-     * Replace the driver's descriptor chain with the standalone ring in
-     * SRAM and restart the transfer from it.  Interrupts are silenced first
-     * because nothing services them once Linux takes over the CLIC.
-     */
     build_dma_link();
     silence_lcd_interrupts(channel);
     start_dma_link(channel);
@@ -213,3 +349,5 @@ fail:
     panel = NULL;
     return false;
 }
+
+#endif
