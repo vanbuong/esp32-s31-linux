@@ -35,7 +35,7 @@ LINUX_GENERATED_PATCH := linux/patches/0000-esp32s31-add-source-files.patch
 # enables on-board RGMII Gigabit Ethernet, an external SDIO microSD on the
 # dedicated SDMMC pads, and an SPI ILI9341 panel on the J2 header pins
 # documented in bootloader/main/board.h.  function-coreboard-1-spi-sd is the
-# same board with an SPI microSD socket on those SDMMC pads (spi-gpio).
+# same board with an SPI microSD socket on those SDMMC pads (GPSPI3).
 BOARD ?= korvo-1
 ifeq ($(BOARD),function-coreboard-1-spi-sd)
 BR_DEFCONFIG := esp32s31_fcb1_spi_sd_defconfig

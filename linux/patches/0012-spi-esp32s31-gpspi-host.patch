@@ -1,0 +1,29 @@
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -404,6 +404,14 @@
+ 	  This enables using the Cirrus EP93xx SPI controller in master
+ 	  mode.
+ 
++config SPI_ESP32S31
++	bool "Espressif ESP32-S31 GPSPI support"
++	depends on SOC_ESP32S31 || COMPILE_TEST
++	help
++	  Say Y here to support the ESP32-S31 general-purpose SPI (GPSPI)
++	  controllers in master mode. Transfers use the CPU FIFO; GDMA is
++	  not required.
++
+ config SPI_FALCON
+ 	bool "Falcon SPI controller support"
+ 	depends on SOC_FALCON
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -57,6 +57,7 @@
+ obj-$(CONFIG_SPI_DW_MMIO)		+= spi-dw-mmio.o
+ obj-$(CONFIG_SPI_DW_PCI)		+= spi-dw-pci.o
+ obj-$(CONFIG_SPI_EP93XX)		+= spi-ep93xx.o
++obj-$(CONFIG_SPI_ESP32S31)		+= spi-esp32s31.o
+ obj-$(CONFIG_SPI_FALCON)		+= spi-falcon.o
+ obj-$(CONFIG_SPI_FSI)			+= spi-fsi.o
+ obj-$(CONFIG_SPI_FSL_CPM)		+= spi-fsl-cpm.o

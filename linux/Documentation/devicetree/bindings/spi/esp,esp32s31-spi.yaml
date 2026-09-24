@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/spi/esp,esp32s31-spi.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Espressif ESP32-S31 GPSPI controller
+
+maintainers:
+  - Marco Mueller <hello@annoyedmilk.ch>
+
+description:
+  General-purpose SPI (GPSPI) master on the ESP32-S31. SPI2 is typically
+  reserved for a boot-time display; SPI3 is free for Linux. Transfers use
+  the 64-byte CPU FIFO. Chip-select lines are expected as cs-gpios; the
+  hardware CS outputs stay disabled.
+
+allOf:
+  - $ref: spi-controller.yaml#
+
+properties:
+  compatible:
+    const: esp,esp32s31-spi
+
+  reg:
+    items:
+      - description: GPSPI register window
+      - description: HP_SYS_CLKRST GPSPI CTRL0 register
+      - description: GPIO matrix registers
+      - description: IO MUX registers
+
+  reg-names:
+    items:
+      - const: spi
+      - const: clkrst
+      - const: gpio
+      - const: iomux
+
+  clocks:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  esp,sck-pin:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: SoC pad number routed to GPSPI SCLK through the GPIO matrix.
+
+  esp,mosi-pin:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: SoC pad number routed to GPSPI MOSI through the GPIO matrix.
+
+  esp,miso-pin:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: SoC pad number routed to GPSPI MISO through the GPIO matrix.
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - clocks
+  - esp,sck-pin
+  - esp,mosi-pin
+  - esp,miso-pin
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    spi@20390000 {
+        compatible = "esp,esp32s31-spi";
+        reg = <0x20390000 0x1000>, <0x20587070 0x4>,
+              <0x20583000 0x1000>, <0x20582000 0x1000>;
+        reg-names = "spi", "clkrst", "gpio", "iomux";
+        clocks = <&xtal>;
+        interrupt-parent = <&clic>;
+        interrupts = <37 5 IRQ_TYPE_LEVEL_HIGH>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        esp,sck-pin = <24>;
+        esp,mosi-pin = <25>;
+        esp,miso-pin = <20>;
+        cs-gpios = <&gpio 23 1>;
+    };

@@ -21,8 +21,8 @@
 
 /*
  * SPI microSD on the J2 SDMMC slot-0 pads, using Espressif's SDSPI mapping:
- *   CLK=SCLK, CMD=MOSI, D0=MISO, D3=CS.  Linux drives this with spi-gpio +
- *   mmc_spi (no GPSPI host driver yet).  Rewire in DTS + these macros.
+ *   CLK=SCLK, CMD=MOSI, D0=MISO, D3=CS.  Linux drives this with GPSPI3 +
+ *   mmc_spi.  Rewire in DTS + these macros.
  */
 #define BOARD_SPI_SD_PIN_SCLK		24
 #define BOARD_SPI_SD_PIN_MOSI		25
