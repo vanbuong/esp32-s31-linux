@@ -24,7 +24,6 @@
 #define LCD_FB_ADDR		BOARD_FB_ADDR
 #define LCD_H_RES		BOARD_LCD_H_RES
 #define LCD_V_RES		BOARD_LCD_V_RES
-#define LCD_FB_SIZE		(LCD_H_RES * LCD_V_RES * 2U)
 #define LCD_REFRESH_MS		100
 /*
  * SPI DMA cannot pull the PSRAM framebuffer directly, and an internal bounce
