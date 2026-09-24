@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <string.h>
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_lcd_panel_io.h"
@@ -23,11 +24,18 @@
 #define LCD_FB_ADDR		BOARD_FB_ADDR
 #define LCD_H_RES		BOARD_LCD_H_RES
 #define LCD_V_RES		BOARD_LCD_V_RES
-#define LCD_FB_SIZE		(LCD_H_RES * LCD_V_RES * 2U)
 #define LCD_REFRESH_MS		100
+/*
+ * SPI DMA cannot pull the PSRAM framebuffer directly, and an internal bounce
+ * of the whole 150 KiB frame will not fit next to Wi-Fi/Ethernet.  Stream a
+ * few lines at a time through a small DMA-capable strip instead.
+ */
+#define LCD_STRIP_LINES		8U
+#define LCD_STRIP_BYTES		(LCD_STRIP_LINES * LCD_H_RES * 2U)
 
 static const char *TAG = "s31-linux-ili9341";
 static esp_lcd_panel_handle_t panel;
+static uint16_t *dma_strip;
 
 static void fill_color_bars(void)
 {
@@ -43,6 +51,38 @@ static void fill_color_bars(void)
     }
 }
 
+static void lcd_copy_strip_be(uint16_t *dst, const uint16_t *src, size_t pixels)
+{
+	/*
+	 * Linux simplefb/fbcon stores native (little-endian) RGB565.  ILI9341
+	 * SPI wants the high byte first on the wire, so swap each pixel.
+	 */
+	for (size_t i = 0; i < pixels; i++) {
+		dst[i] = __builtin_bswap16(src[i]);
+	}
+}
+
+static void lcd_flush_framebuffer(void)
+{
+	const uint16_t *fb = (const uint16_t *)LCD_FB_ADDR;
+
+	if (!panel || !dma_strip) {
+		return;
+	}
+
+	for (uint32_t y = 0; y < LCD_V_RES; y += LCD_STRIP_LINES) {
+		uint32_t lines = LCD_V_RES - y;
+
+		if (lines > LCD_STRIP_LINES) {
+			lines = LCD_STRIP_LINES;
+		}
+		lcd_copy_strip_be(dma_strip, fb + y * LCD_H_RES,
+				  lines * LCD_H_RES);
+		esp_lcd_panel_draw_bitmap(panel, 0, (int)y, LCD_H_RES,
+					  (int)(y + lines), dma_strip);
+	}
+}
+
 /*
  * After the handoff the GMAC and Wi-Fi stacks own most of hart 0.  A low
  * priority task keeps scanning the PSRAM frame buffer out over SPI so the
@@ -54,10 +94,7 @@ static void lcd_refresh_task(void *arg)
     (void)arg;
 
     for (;;) {
-        if (panel) {
-            esp_lcd_panel_draw_bitmap(panel, 0, 0, LCD_H_RES, LCD_V_RES,
-                                      (const void *)LCD_FB_ADDR);
-        }
+        lcd_flush_framebuffer();
         vTaskDelay(pdMS_TO_TICKS(LCD_REFRESH_MS));
     }
 }
@@ -70,7 +107,7 @@ bool display_init(void)
         .miso_io_num = BOARD_LCD_PIN_MISO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = LCD_FB_SIZE + 8,
+        .max_transfer_sz = LCD_STRIP_BYTES + 8,
     };
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_spi_config_t io_config = {
@@ -78,7 +115,7 @@ bool display_init(void)
         .dc_gpio_num = BOARD_LCD_PIN_DC,
         .spi_mode = 0,
         .pclk_hz = BOARD_LCD_SPI_CLOCK_HZ,
-        .trans_queue_depth = 10,
+        .trans_queue_depth = 4,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
     };
@@ -91,6 +128,13 @@ bool display_init(void)
 
     if (panel) {
         return true;
+    }
+
+    dma_strip = heap_caps_malloc(LCD_STRIP_BYTES,
+                                 MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (!dma_strip) {
+        ESP_LOGE(TAG, "no DMA strip (%u bytes)", (unsigned)LCD_STRIP_BYTES);
+        return false;
     }
 
     if (BOARD_LCD_PIN_BL >= 0) {
@@ -108,28 +152,35 @@ bool display_init(void)
     err = spi_bus_initialize(BOARD_LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(err));
-        return false;
+        goto fail_strip;
     }
 
     err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)BOARD_LCD_SPI_HOST,
                                    &io_config, &io);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "panel io failed: %s", esp_err_to_name(err));
-        return false;
+        goto fail_strip;
     }
 
     err = esp_lcd_new_panel_ili9341(io, &panel_config, &panel);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "ili9341 panel failed: %s", esp_err_to_name(err));
-        return false;
+        goto fail_strip;
     }
 
     err = esp_lcd_panel_reset(panel);
     if (err == ESP_OK) {
         err = esp_lcd_panel_init(panel);
     }
+    /*
+     * ILI9341 is native 240x320.  Our framebuffer is 320x240 landscape, so
+     * exchange X/Y (MADCTL.MV) before the first flush.
+     */
     if (err == ESP_OK) {
-        err = esp_lcd_panel_mirror(panel, false, false);
+        err = esp_lcd_panel_swap_xy(panel, true);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_mirror(panel, true, false);
     }
     if (err == ESP_OK) {
         err = esp_lcd_panel_disp_on_off(panel, true);
@@ -138,11 +189,10 @@ bool display_init(void)
         ESP_LOGE(TAG, "panel bring-up failed: %s", esp_err_to_name(err));
         esp_lcd_panel_del(panel);
         panel = NULL;
-        return false;
+        goto fail_strip;
     }
 
-    esp_lcd_panel_draw_bitmap(panel, 0, 0, LCD_H_RES, LCD_V_RES,
-                              (const void *)LCD_FB_ADDR);
+    lcd_flush_framebuffer();
 
     if (xTaskCreate(lcd_refresh_task, "ili9341_fb", 4096, NULL, 1,
                     NULL) != pdPASS) {
@@ -150,12 +200,17 @@ bool display_init(void)
     }
 
     ESP_LOGI(TAG, "ILI9341 framebuffer live: %ux%u RGB565 fb=0x%08" PRIx32
-                  " SPI SCLK=%d MOSI=%d CS=%d DC=%d RST=%d BL=%d",
+                  " strip=%u lines SPI SCLK=%d MOSI=%d CS=%d DC=%d RST=%d BL=%d",
              (unsigned)LCD_H_RES, (unsigned)LCD_V_RES,
-             (uint32_t)LCD_FB_ADDR,
+             (uint32_t)LCD_FB_ADDR, (unsigned)LCD_STRIP_LINES,
              BOARD_LCD_PIN_SCLK, BOARD_LCD_PIN_MOSI, BOARD_LCD_PIN_CS,
              BOARD_LCD_PIN_DC, BOARD_LCD_PIN_RST, BOARD_LCD_PIN_BL);
     return true;
+
+fail_strip:
+    heap_caps_free(dma_strip);
+    dma_strip = NULL;
+    return false;
 }
 
 #else /* RGB Korvo path lives in display_rgb.c via the shared display_init. */
