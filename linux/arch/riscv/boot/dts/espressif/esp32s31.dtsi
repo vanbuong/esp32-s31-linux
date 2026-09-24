@@ -168,9 +168,9 @@
 		 */
 		spi3: spi@20390000 {
 			compatible = "esp,esp32s31-spi";
-			reg = <0x20390000 0x1000>, <0x20587070 0x4>,
-			      <0x20583000 0x1000>, <0x20582000 0x1000>;
-			reg-names = "spi", "clkrst", "gpio", "iomux";
+			reg = <0x20390000 0x1000>, <0x20587070 0x4>;
+			reg-names = "spi", "clkrst";
+			esp,gpio-ctrl = <&gpio>;
 			clocks = <&xtal>;
 			interrupt-parent = <&clic>;
 			interrupts = <37 5 IRQ_TYPE_LEVEL_HIGH>;

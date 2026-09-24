@@ -13,7 +13,9 @@ description:
   General-purpose SPI (GPSPI) master on the ESP32-S31. SPI2 is typically
   reserved for a boot-time display; SPI3 is free for Linux. Transfers use
   the 64-byte CPU FIFO. Chip-select lines are expected as cs-gpios; the
-  hardware CS outputs stay disabled.
+  hardware CS outputs stay disabled. Pad routing goes through the shared
+  GPIO matrix (esp,gpio-ctrl); that window is owned by the GPIO driver, so
+  it is not listed in reg.
 
 allOf:
   - $ref: spi-controller.yaml#
@@ -26,21 +28,21 @@ properties:
     items:
       - description: GPSPI register window
       - description: HP_SYS_CLKRST GPSPI CTRL0 register
-      - description: GPIO matrix registers
-      - description: IO MUX registers
 
   reg-names:
     items:
       - const: spi
       - const: clkrst
-      - const: gpio
-      - const: iomux
 
   clocks:
     maxItems: 1
 
   interrupts:
     maxItems: 1
+
+  esp,gpio-ctrl:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: Phandle to the SoC GPIO controller (matrix + IO MUX).
 
   esp,sck-pin:
     $ref: /schemas/types.yaml#/definitions/uint32
@@ -59,6 +61,7 @@ required:
   - reg
   - reg-names
   - clocks
+  - esp,gpio-ctrl
   - esp,sck-pin
   - esp,mosi-pin
   - esp,miso-pin
@@ -71,9 +74,9 @@ examples:
 
     spi@20390000 {
         compatible = "esp,esp32s31-spi";
-        reg = <0x20390000 0x1000>, <0x20587070 0x4>,
-              <0x20583000 0x1000>, <0x20582000 0x1000>;
-        reg-names = "spi", "clkrst", "gpio", "iomux";
+        reg = <0x20390000 0x1000>, <0x20587070 0x4>;
+        reg-names = "spi", "clkrst";
+        esp,gpio-ctrl = <&gpio>;
         clocks = <&xtal>;
         interrupt-parent = <&clic>;
         interrupts = <37 5 IRQ_TYPE_LEVEL_HIGH>;

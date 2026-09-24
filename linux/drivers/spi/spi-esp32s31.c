@@ -16,6 +16,7 @@
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 
@@ -405,6 +406,47 @@ static int esp32s31_spi_transfer_one(struct spi_controller *host,
 	return 0;
 }
 
+static void esp32s31_spi_unmap_gpio(void *data)
+{
+	struct esp32s31_spi *esp = data;
+
+	if (esp->iomux)
+		iounmap(esp->iomux);
+	if (esp->gpio)
+		iounmap(esp->gpio);
+}
+
+/*
+ * Map the GPIO matrix / IO MUX without request_mem_region: those windows are
+ * already claimed by gpio-esp32s31, but GPSPI still needs to program the
+ * matrix for its pads.
+ */
+static int esp32s31_spi_map_gpio(struct device *dev, struct esp32s31_spi *esp)
+{
+	struct device_node *np;
+	int ret;
+
+	np = of_parse_phandle(dev->of_node, "esp,gpio-ctrl", 0);
+	if (!np)
+		return dev_err_probe(dev, -ENODEV, "esp,gpio-ctrl\n");
+
+	esp->gpio = of_iomap(np, 0);
+	esp->iomux = of_iomap(np, 1);
+	of_node_put(np);
+	if (!esp->gpio || !esp->iomux) {
+		esp32s31_spi_unmap_gpio(esp);
+		esp->gpio = NULL;
+		esp->iomux = NULL;
+		return -ENOMEM;
+	}
+
+	ret = devm_add_action_or_reset(dev, esp32s31_spi_unmap_gpio, esp);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
 static int esp32s31_spi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -429,13 +471,9 @@ static int esp32s31_spi_probe(struct platform_device *pdev)
 	if (IS_ERR(esp->clkrst))
 		return PTR_ERR(esp->clkrst);
 
-	esp->gpio = devm_platform_ioremap_resource_byname(pdev, "gpio");
-	if (IS_ERR(esp->gpio))
-		return PTR_ERR(esp->gpio);
-
-	esp->iomux = devm_platform_ioremap_resource_byname(pdev, "iomux");
-	if (IS_ERR(esp->iomux))
-		return PTR_ERR(esp->iomux);
+	ret = esp32s31_spi_map_gpio(dev, esp);
+	if (ret)
+		return ret;
 
 	esp->clk = devm_clk_get_enabled(dev, NULL);
 	if (IS_ERR(esp->clk))

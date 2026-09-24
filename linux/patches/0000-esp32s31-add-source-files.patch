@@ -414,7 +414,7 @@ diff --git a/Documentation/devicetree/bindings/spi/esp,esp32s31-spi.yaml b/Docum
 new file mode 100644
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/spi/esp,esp32s31-spi.yaml
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,89 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +%YAML 1.2
 +---
@@ -430,7 +430,9 @@ new file mode 100644
 +  General-purpose SPI (GPSPI) master on the ESP32-S31. SPI2 is typically
 +  reserved for a boot-time display; SPI3 is free for Linux. Transfers use
 +  the 64-byte CPU FIFO. Chip-select lines are expected as cs-gpios; the
-+  hardware CS outputs stay disabled.
++  hardware CS outputs stay disabled. Pad routing goes through the shared
++  GPIO matrix (esp,gpio-ctrl); that window is owned by the GPIO driver, so
++  it is not listed in reg.
 +
 +allOf:
 +  - $ref: spi-controller.yaml#
@@ -443,21 +445,21 @@ new file mode 100644
 +    items:
 +      - description: GPSPI register window
 +      - description: HP_SYS_CLKRST GPSPI CTRL0 register
-+      - description: GPIO matrix registers
-+      - description: IO MUX registers
 +
 +  reg-names:
 +    items:
 +      - const: spi
 +      - const: clkrst
-+      - const: gpio
-+      - const: iomux
 +
 +  clocks:
 +    maxItems: 1
 +
 +  interrupts:
 +    maxItems: 1
++
++  esp,gpio-ctrl:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: Phandle to the SoC GPIO controller (matrix + IO MUX).
 +
 +  esp,sck-pin:
 +    $ref: /schemas/types.yaml#/definitions/uint32
@@ -476,6 +478,7 @@ new file mode 100644
 +  - reg
 +  - reg-names
 +  - clocks
++  - esp,gpio-ctrl
 +  - esp,sck-pin
 +  - esp,mosi-pin
 +  - esp,miso-pin
@@ -488,9 +491,9 @@ new file mode 100644
 +
 +    spi@20390000 {
 +        compatible = "esp,esp32s31-spi";
-+        reg = <0x20390000 0x1000>, <0x20587070 0x4>,
-+              <0x20583000 0x1000>, <0x20582000 0x1000>;
-+        reg-names = "spi", "clkrst", "gpio", "iomux";
++        reg = <0x20390000 0x1000>, <0x20587070 0x4>;
++        reg-names = "spi", "clkrst";
++        esp,gpio-ctrl = <&gpio>;
 +        clocks = <&xtal>;
 +        interrupt-parent = <&clic>;
 +        interrupts = <37 5 IRQ_TYPE_LEVEL_HIGH>;
@@ -686,9 +689,9 @@ new file mode 100644
 +		 */
 +		spi3: spi@20390000 {
 +			compatible = "esp,esp32s31-spi";
-+			reg = <0x20390000 0x1000>, <0x20587070 0x4>,
-+			      <0x20583000 0x1000>, <0x20582000 0x1000>;
-+			reg-names = "spi", "clkrst", "gpio", "iomux";
++			reg = <0x20390000 0x1000>, <0x20587070 0x4>;
++			reg-names = "spi", "clkrst";
++			esp,gpio-ctrl = <&gpio>;
 +			clocks = <&xtal>;
 +			interrupt-parent = <&clic>;
 +			interrupts = <37 5 IRQ_TYPE_LEVEL_HIGH>;
@@ -3946,7 +3949,7 @@ diff --git a/drivers/spi/spi-esp32s31.c b/drivers/spi/spi-esp32s31.c
 new file mode 100644
 --- /dev/null
 +++ b/drivers/spi/spi-esp32s31.c
-@@ -0,0 +1,500 @@
+@@ -0,0 +1,538 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Author: Marco Mueller <hello@annoyedmilk.ch>
@@ -3965,6 +3968,7 @@ new file mode 100644
 +#include <linux/mod_devicetable.h>
 +#include <linux/module.h>
 +#include <linux/of.h>
++#include <linux/of_address.h>
 +#include <linux/platform_device.h>
 +#include <linux/spi/spi.h>
 +
@@ -4354,6 +4358,47 @@ new file mode 100644
 +	return 0;
 +}
 +
++static void esp32s31_spi_unmap_gpio(void *data)
++{
++	struct esp32s31_spi *esp = data;
++
++	if (esp->iomux)
++		iounmap(esp->iomux);
++	if (esp->gpio)
++		iounmap(esp->gpio);
++}
++
++/*
++ * Map the GPIO matrix / IO MUX without request_mem_region: those windows are
++ * already claimed by gpio-esp32s31, but GPSPI still needs to program the
++ * matrix for its pads.
++ */
++static int esp32s31_spi_map_gpio(struct device *dev, struct esp32s31_spi *esp)
++{
++	struct device_node *np;
++	int ret;
++
++	np = of_parse_phandle(dev->of_node, "esp,gpio-ctrl", 0);
++	if (!np)
++		return dev_err_probe(dev, -ENODEV, "esp,gpio-ctrl\n");
++
++	esp->gpio = of_iomap(np, 0);
++	esp->iomux = of_iomap(np, 1);
++	of_node_put(np);
++	if (!esp->gpio || !esp->iomux) {
++		esp32s31_spi_unmap_gpio(esp);
++		esp->gpio = NULL;
++		esp->iomux = NULL;
++		return -ENOMEM;
++	}
++
++	ret = devm_add_action_or_reset(dev, esp32s31_spi_unmap_gpio, esp);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
 +static int esp32s31_spi_probe(struct platform_device *pdev)
 +{
 +	struct device *dev = &pdev->dev;
@@ -4378,13 +4423,9 @@ new file mode 100644
 +	if (IS_ERR(esp->clkrst))
 +		return PTR_ERR(esp->clkrst);
 +
-+	esp->gpio = devm_platform_ioremap_resource_byname(pdev, "gpio");
-+	if (IS_ERR(esp->gpio))
-+		return PTR_ERR(esp->gpio);
-+
-+	esp->iomux = devm_platform_ioremap_resource_byname(pdev, "iomux");
-+	if (IS_ERR(esp->iomux))
-+		return PTR_ERR(esp->iomux);
++	ret = esp32s31_spi_map_gpio(dev, esp);
++	if (ret)
++		return ret;
 +
 +	esp->clk = devm_clk_get_enabled(dev, NULL);
 +	if (IS_ERR(esp->clk))

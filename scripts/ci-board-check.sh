@@ -138,6 +138,24 @@ if ! grep -q 'compatible = "esp,esp32s31-spi"' \
 else
 	echo "ok      DTS has esp,esp32s31-spi"
 fi
+if ! grep -q 'esp,gpio-ctrl = <&gpio>' \
+	linux/arch/riscv/boot/dts/espressif/esp32s31.dtsi; then
+	echo "FAIL: GPSPI must share GPIO matrix via esp,gpio-ctrl (avoids EBUSY)"
+	fail=1
+elif grep -A6 'spi3: spi@20390000' \
+	linux/arch/riscv/boot/dts/espressif/esp32s31.dtsi |
+	grep -q '0x20583000'; then
+	echo "FAIL: spi3 still claims GPIO matrix regs (conflicts with gpio driver)"
+	fail=1
+else
+	echo "ok      GPSPI uses shared esp,gpio-ctrl (no GPIO reg claim)"
+fi
+if ! grep -q 'of_iomap' linux/drivers/spi/spi-esp32s31.c; then
+	echo "FAIL: GPSPI host must of_iomap GPIO matrix (not request_mem_region)"
+	fail=1
+else
+	echo "ok      GPSPI host maps GPIO matrix without exclusive claim"
+fi
 if ! grep -q 'spi-max-frequency = <40000000>' \
 	linux/arch/riscv/boot/dts/espressif/esp32s31_function_coreboard_1_spi_sd.dts; then
 	echo "FAIL: SPI-SD DTS not requesting 40 MHz GPSPI clock"
