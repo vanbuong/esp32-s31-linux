@@ -1,2 +1,2 @@
 # SPDX-License-Identifier: MIT
-source "package/cam2fb/Config.in"
+source "$BR2_EXTERNAL_ESP32S31_PATH/package/cam2fb/Config.in"
