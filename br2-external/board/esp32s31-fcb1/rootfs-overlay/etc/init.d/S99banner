@@ -11,4 +11,5 @@ echo "Console: ttyS0        Panel: tty1 (SPI ILI9341)"
 echo "Ethernet: dhclient eth0   or: udhcpc -i eth0"
 echo "Wi-Fi:    wifi <ssid> [passphrase]   then: ping 8.8.8.8"
 echo "          saved on success and rejoined at every boot"
+echo "Camera:   cam2fb            (UVC → 320x240 /dev/fb0)"
 echo

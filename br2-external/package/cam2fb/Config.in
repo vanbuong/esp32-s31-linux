@@ -1,0 +1,7 @@
+# Tiny V4L2 → RGB565 framebuffer viewer for the ILI9341 panel.
+config BR2_PACKAGE_CAM2FB
+	bool "cam2fb"
+	help
+	  Capture YUYV frames from a UVC webcam (/dev/video0) and blit them
+	  to /dev/fb0 as RGB565. Sized for the 320x240 Function-CoreBoard-1
+	  SPI panel and ~16 MiB of PSRAM.

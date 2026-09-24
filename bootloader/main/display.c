@@ -180,8 +180,8 @@ bool display_init(void)
         err = esp_lcd_panel_swap_xy(panel, true);
     }
     if (err == ESP_OK) {
-        /* 180° from the previous MX-only landscape orientation. */
-        err = esp_lcd_panel_mirror(panel, false, true);
+        /* Landscape: MX only (invert of the prior MY-only 180° setting). */
+        err = esp_lcd_panel_mirror(panel, true, false);
     }
     if (err == ESP_OK) {
         err = esp_lcd_panel_disp_on_off(panel, true);

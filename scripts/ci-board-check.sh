@@ -176,6 +176,29 @@ else
 	echo "ok      GPSPI Kconfig patch present"
 fi
 
+if ! grep -q 'CONFIG_USB_VIDEO_CLASS=y' \
+	br2-external/board/esp32s31-fcb1-spi-sd/linux.config \
+	br2-external/board/esp32s31-fcb1/linux.config; then
+	echo "FAIL: FCB1 linux.config missing USB Video Class"
+	fail=1
+else
+	echo "ok      FCB1 enables USB_VIDEO_CLASS"
+fi
+if ! grep -q 'BR2_PACKAGE_CAM2FB=y' \
+	br2-external/configs/esp32s31_fcb1_spi_sd_defconfig \
+	br2-external/configs/esp32s31_fcb1_defconfig; then
+	echo "FAIL: FCB1 defconfig missing cam2fb"
+	fail=1
+else
+	echo "ok      FCB1 enables cam2fb"
+fi
+if ! test -f br2-external/package/cam2fb/cam2fb.c; then
+	echo "FAIL: missing br2-external/package/cam2fb/cam2fb.c"
+	fail=1
+else
+	echo "ok      cam2fb package present"
+fi
+
 # The generated source patch must match linux/ + shared IPC headers.
 python3 scripts/mkkernelpatches.py >/tmp/mkkernelpatches.out
 if ! git diff --quiet -- linux/patches/0000-esp32s31-add-source-files.patch; then
