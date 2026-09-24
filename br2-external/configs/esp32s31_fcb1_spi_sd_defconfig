@@ -80,3 +80,5 @@ BR2_PACKAGE_NCURSES_ADDITIONAL_TERMINFO=""
 # Links needs these for HTTPS once the board's clock is set.
 BR2_PACKAGE_OPENSSL=y
 BR2_PACKAGE_CA_CERTIFICATES=y
+# UVC webcam → /dev/fb0 RGB565 preview (needs CONFIG_USB_VIDEO_CLASS).
+BR2_PACKAGE_CAM2FB=y

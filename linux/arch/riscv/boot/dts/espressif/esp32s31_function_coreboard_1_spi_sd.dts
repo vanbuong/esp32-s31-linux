@@ -5,7 +5,7 @@
  *
  * Same on-board Ethernet / USB / Wi-Fi as function_coreboard_1, but the J2
  * SDMMC pads are wired as an SPI microSD socket (CLK/CMD/D0/D3) and driven
- * from Linux with spi-gpio + mmc_spi until a GPSPI host driver exists.
+ * from Linux with GPSPI3 + mmc_spi.
  */
 /dts-v1/;
 #include "esp32s31.dtsi"
@@ -39,30 +39,28 @@
 		interrupt-parent = <&clic>;
 		interrupts = <36 67 IRQ_TYPE_LEVEL_HIGH>;
 	};
-
-	/*
-	 * Bit-banged SPI on the J2 SDMMC pads (Espressif SDSPI mapping).
-	 * Throughput is modest; enough for rootfs bring-up without GPSPI.
-	 */
-	spi_gpio: spi {
-		compatible = "spi-gpio";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		gpio-sck = <&gpio 24 GPIO_ACTIVE_HIGH>;
-		gpio-mosi = <&gpio 25 GPIO_ACTIVE_HIGH>;
-		gpio-miso = <&gpio 20 GPIO_ACTIVE_HIGH>;
-		num-chipselects = <1>;
-		cs-gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
-
-		mmc_spi: mmc-slot@0 {
-			compatible = "mmc-spi-slot";
-			reg = <0>;
-			spi-max-frequency = <2000000>;
-			voltage-ranges = <3300 3300>;
-			broken-cd;
-		};
-	};
 };
 
 /* Native SDMMC stays off; SPI owns the same header pads. */
 &sdmmc0 { status = "disabled"; };
+
+/*
+ * Espressif SDSPI mapping on the J2 SDMMC pads:
+ *   CLK=SCLK GPIO24, CMD=MOSI GPIO25, D0=MISO GPIO20, D3=CS GPIO23.
+ * XTAL (40 MHz) clocks GPSPI3; spi-max-frequency rides that ceiling.
+ */
+&spi3 {
+	status = "okay";
+	esp,sck-pin = <24>;
+	esp,mosi-pin = <25>;
+	esp,miso-pin = <20>;
+	cs-gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+
+	mmc_spi: mmc-slot@0 {
+		compatible = "mmc-spi-slot";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
+		voltage-ranges = <3300 3300>;
+		broken-cd;
+	};
+};

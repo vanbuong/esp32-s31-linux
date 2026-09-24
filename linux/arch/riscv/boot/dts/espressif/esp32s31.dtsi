@@ -161,6 +161,25 @@
 			clocks = <&xtal>;
 		};
 
+		/*
+		 * GPSPI3.  SPI2 (0x2038f000) is left for the loader's ILI9341.
+		 * Pads are assigned per board via esp,*-pin and cs-gpios; the
+		 * driver routes them through the GPIO matrix.
+		 */
+		spi3: spi@20390000 {
+			compatible = "esp,esp32s31-spi";
+			reg = <0x20390000 0x1000>, <0x20587070 0x4>;
+			reg-names = "spi", "clkrst";
+			esp,gpio-ctrl = <&gpio>;
+			clocks = <&xtal>;
+			interrupt-parent = <&clic>;
+			interrupts = <37 5 IRQ_TYPE_LEVEL_HIGH>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			num-cs = <1>;
+			status = "disabled";
+		};
+
 		trng: rng@20814000 {
 			compatible = "esp,esp32s31-trng";
 			reg = <0x20814000 0x100>, <0x2071003c 0x4>;

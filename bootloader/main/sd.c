@@ -160,7 +160,7 @@ void init_sd_card(void)
     esp_err_t err;
 
     /*
-     * Leave the pads as GPIO with pull-ups; Linux spi-gpio + mmc_spi own the
+     * Leave the pads as GPIO with pull-ups; Linux GPSPI3 + mmc_spi own the
      * bus after the handoff.  Do not claim them as SDMMC.
      */
     for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
@@ -176,7 +176,7 @@ void init_sd_card(void)
     }
 
     ESP_LOGI(TAG,
-             "SPI microSD (%s): SCLK=%d MOSI=%d MISO=%d CS=%d (Linux spi-gpio)",
+             "SPI microSD (%s): SCLK=%d MOSI=%d MISO=%d CS=%d (Linux GPSPI3)",
              BOARD_NAME, BOARD_SPI_SD_PIN_SCLK, BOARD_SPI_SD_PIN_MOSI,
              BOARD_SPI_SD_PIN_MISO, BOARD_SPI_SD_PIN_CS);
 }
