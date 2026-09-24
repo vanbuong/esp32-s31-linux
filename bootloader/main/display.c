@@ -51,24 +51,36 @@ static void fill_color_bars(void)
     }
 }
 
+static void lcd_copy_strip_be(uint16_t *dst, const uint16_t *src, size_t pixels)
+{
+	/*
+	 * Linux simplefb/fbcon stores native (little-endian) RGB565.  ILI9341
+	 * SPI wants the high byte first on the wire, so swap each pixel.
+	 */
+	for (size_t i = 0; i < pixels; i++) {
+		dst[i] = __builtin_bswap16(src[i]);
+	}
+}
+
 static void lcd_flush_framebuffer(void)
 {
-    const uint16_t *fb = (const uint16_t *)LCD_FB_ADDR;
+	const uint16_t *fb = (const uint16_t *)LCD_FB_ADDR;
 
-    if (!panel || !dma_strip) {
-        return;
-    }
+	if (!panel || !dma_strip) {
+		return;
+	}
 
-    for (uint32_t y = 0; y < LCD_V_RES; y += LCD_STRIP_LINES) {
-        uint32_t lines = LCD_V_RES - y;
+	for (uint32_t y = 0; y < LCD_V_RES; y += LCD_STRIP_LINES) {
+		uint32_t lines = LCD_V_RES - y;
 
-        if (lines > LCD_STRIP_LINES) {
-            lines = LCD_STRIP_LINES;
-        }
-        memcpy(dma_strip, fb + y * LCD_H_RES, lines * LCD_H_RES * 2U);
-        esp_lcd_panel_draw_bitmap(panel, 0, (int)y, LCD_H_RES,
-                                  (int)(y + lines), dma_strip);
-    }
+		if (lines > LCD_STRIP_LINES) {
+			lines = LCD_STRIP_LINES;
+		}
+		lcd_copy_strip_be(dma_strip, fb + y * LCD_H_RES,
+				  lines * LCD_H_RES);
+		esp_lcd_panel_draw_bitmap(panel, 0, (int)y, LCD_H_RES,
+					  (int)(y + lines), dma_strip);
+	}
 }
 
 /*
@@ -160,8 +172,15 @@ bool display_init(void)
     if (err == ESP_OK) {
         err = esp_lcd_panel_init(panel);
     }
+    /*
+     * ILI9341 is native 240x320.  Our framebuffer is 320x240 landscape, so
+     * exchange X/Y (MADCTL.MV) before the first flush.
+     */
     if (err == ESP_OK) {
-        err = esp_lcd_panel_mirror(panel, false, false);
+        err = esp_lcd_panel_swap_xy(panel, true);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_mirror(panel, true, false);
     }
     if (err == ESP_OK) {
         err = esp_lcd_panel_disp_on_off(panel, true);
